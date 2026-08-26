@@ -8,7 +8,10 @@
     "scheme": "wifilogger",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon"
+      "icon": "./assets/expo.icon",
+      "entitlements": {
+        "com.apple.developer.networking.wifi-info": true
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -25,6 +28,7 @@
     },
     "plugins": [
       "expo-router",
+      "react-native-wifi-reborn",
       [
         "expo-splash-screen",
         {
