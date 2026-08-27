@@ -1,48 +1,217 @@
-import { useEffect, useRef, useState } from "react";
-import { Alert, AppState, PermissionsAndroid, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
-import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
-import { clearMeasurements, createMeasurement, exportDataset, loadMeasurements, saveMeasurements, type Floor, type Measurement } from "../lib/dataset";
-import { getConnectedWifi, type WifiSnapshot } from "../lib/wifi";
-
-const SAMPLE_MS = 25_000;
-const emptyWifi: WifiSnapshot = { connectionState: "UNKNOWN", ssid: null, bssid: null, signalStrength: null, signalStrengthUnit: null, frequency: null };
-const duration = (seconds: number) => [Math.floor(seconds / 3600), Math.floor((seconds % 3600) / 60), seconds % 60].map((n) => String(n).padStart(2, "0")).join(":");
-const unavailable = (item: string | number | null) => item === null ? "Not available" : String(item);
+import { Pressable, ScrollView, Text, View } from "react-native";
+import { InfoRow } from "../components/InfoRow";
+import { Metric } from "../components/Metric";
+import { Section } from "../components/Section";
+import { useWifiLogger } from "../hooks/useWifiLogger";
+import type { Floor } from "../lib/dataset";
+import { formatDuration, formatUnavailable } from "../utils/format";
+import { styles } from "../styles/appStyles";
 
 export default function Index() {
-  const [floor, setFloor] = useState<Floor>("FLOOR_1"); const [wifi, setWifi] = useState(emptyWifi); const [items, setItems] = useState<Measurement[]>([]);
-  const [recording, setRecording] = useState(false); const [started, setStarted] = useState<number | null>(null); const [seconds, setSeconds] = useState(0);
-  const [paused, setPaused] = useState(false); const [network, setNetwork] = useState<string | null>(null); const [notice, setNotice] = useState<string | null>(null);
-  const interval = useRef<ReturnType<typeof setInterval> | null>(null); const lastSample = useRef<string | null>(null);
-  useEffect(() => { if (recording && !paused) { void activateKeepAwakeAsync("wifi-logger"); return () => { void deactivateKeepAwake("wifi-logger"); }; } }, [recording, paused]);
-  useEffect(() => { void loadMeasurements().then(setItems).catch(() => setNotice("Could not load the saved dataset.")); void refresh(); const subscription = AppState.addEventListener("change", (state) => { if (state === "active") void refresh(); }); return () => subscription.remove(); }, []);
-  useEffect(() => { if (!recording || !started) return; const clock = setInterval(() => setSeconds(Math.floor((Date.now() - started) / 1000)), 1000); return () => clearInterval(clock); }, [recording, started]);
-  // `sample` intentionally reads the current floor/network closure; these state values restart the timer when changed.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!recording || paused) return; interval.current = setInterval(() => void sample(), SAMPLE_MS); return () => { if (interval.current) clearInterval(interval.current); }; }, [recording, paused, floor, network]);
-  async function refresh() { try { setWifi(await getConnectedWifi()); } catch { setWifi(emptyWifi); } }
-  async function permission() { if (Platform.OS !== "android") return true; const result = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, { title: "Wi-Fi connection access", message: "Android requires location access to show details of the Wi-Fi you are already connected to. This app never scans nearby networks.", buttonPositive: "Allow", buttonNegative: "Not now" }); if (result === PermissionsAndroid.RESULTS.GRANTED) return true; setNotice("Wi-Fi details need Android location access. Enable it in Settings before recording."); return false; }
-  async function sample() { try { const current = await getConnectedWifi(); setWifi(current); if (current.connectionState !== "CONNECTED" || !current.ssid) { setNotice("Recording is waiting: connect to Wi-Fi to collect a measurement."); return; } if (network && current.ssid !== network) { setPaused(true); setNotice(`WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${current.ssid}. Recording paused.`); return; } const item = createMeasurement(floor, current); const key = `${item.timestamp.slice(0, 19)}-${item.ssid}-${item.floor}`; if (key === lastSample.current) return; lastSample.current = key; setItems((old) => { const next = [...old, item]; void saveMeasurements(next); return next; }); } catch { setNotice("A Wi-Fi reading failed. Recording will retry at the next interval."); } }
-  async function start() { if (!(await permission())) return; const current = await getConnectedWifi(); setWifi(current); if (current.connectionState !== "CONNECTED" || !current.ssid) { setNotice("Connect to the gym Wi-Fi first, then start recording."); return; } setNetwork(current.ssid); setStarted(Date.now()); setSeconds(0); setPaused(false); setRecording(true); setNotice(null); await sample(); }
-  function stop() { setRecording(false); setPaused(false); setNotice("Recording stopped. Your dataset remains stored on this device."); }
-  async function resume() { const current = await getConnectedWifi(); if (current.ssid !== network) { setNotice("Reconnect to the original Wi-Fi before resuming."); return; } setPaused(false); setNotice(null); await sample(); }
-  function clear() { Alert.alert("Clear dataset?", `This permanently removes ${items.length} local measurements.`, [{ text: "Cancel", style: "cancel" }, { text: "Clear", style: "destructive", onPress: () => { void clearMeasurements(); setItems([]); } }]); }
-  const latest = items.at(-1);
-  return <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
-    <View style={styles.hero}><Text style={styles.eyebrow}>GYM EXPERIMENT</Text><Text style={styles.title}>Wi‑Fi Floor{`\n`}Data Logger</Text><Text style={styles.sub}>Collect labeled readings from the Wi‑Fi you are already connected to.</Text></View>
-    <View style={styles.status}><View style={[styles.dot, wifi.connectionState === "CONNECTED" ? styles.good : styles.muted]} /><View><Text style={styles.statusLabel}>CONNECTED WI‑FI</Text><Text style={styles.statusValue}>{wifi.connectionState === "CONNECTED" ? unavailable(wifi.ssid) : "Not connected"}</Text></View><Text style={styles.rssi}>{wifi.signalStrength === null ? "—" : `${wifi.signalStrength} dBm`}</Text></View>
-    {notice && <Pressable onPress={() => setNotice(null)} style={styles.notice}><Text style={styles.noticeText}>{notice}</Text><Text style={styles.dismiss}>TAP TO DISMISS</Text></Pressable>}
-    <Text style={styles.label}>CURRENT FLOOR LABEL</Text><View style={styles.floorRow}>{(["FLOOR_1", "FLOOR_2"] as Floor[]).map((item) => <Pressable key={item} onPress={() => setFloor(item)} style={[styles.floor, floor === item && styles.floorActive]}><Text style={[styles.floorText, floor === item && styles.floorTextActive]}>{item.replace("_", " ")}</Text><Text style={[styles.floorSub, floor === item && styles.floorTextActive]}>{item === "FLOOR_1" ? "Strength area" : "Cardio area"}</Text></Pressable>)}</View>
-    <View style={styles.metrics}><Metric label="RECORDING" value={recording ? (paused ? "PAUSED" : "● YES") : "NO"} accent={recording && !paused} /><Metric label="MEASUREMENTS" value={String(items.length)} /><Metric label="DURATION" value={duration(seconds)} /></View>
-    <Pressable onPress={recording ? stop : start} style={[styles.primary, recording && styles.stop]}><Text style={styles.primaryText}>{recording ? "STOP RECORDING" : "START RECORDING"}</Text></Pressable>{paused && <Pressable onPress={() => void resume()} style={styles.secondary}><Text style={styles.secondaryText}>RESUME ON ORIGINAL WI‑FI</Text></Pressable>}
-    <Section title="CURRENT CONNECTION"><Row label="Connection" value={wifi.connectionState} /><Row label="SSID" value={wifi.ssid} /><Row label="BSSID" value={wifi.bssid} /><Row label="Signal strength" value={wifi.signalStrength === null ? null : `${wifi.signalStrength} dBm`} /><Row label="Frequency" value={wifi.frequency === null ? null : `${wifi.frequency} MHz`} /></Section>
-    <Section title="LATEST MEASUREMENT">{latest ? <><Row label="Time" value={new Date(latest.timestamp).toLocaleTimeString()} /><Row label="Floor" value={latest.floor.replace("_", " ")} /><Row label="SSID" value={latest.ssid} /><Row label="Signal" value={latest.signalStrength === null ? null : `${latest.signalStrength} dBm`} /></> : <Text style={styles.empty}>No measurements yet.</Text>}</Section>
-    <Section title="PLATFORM CAPABILITIES"><Text style={styles.capTitle}>Android</Text><Text style={styles.cap}>SSID, BSSID, signal strength & frequency — available with location permission.</Text><Text style={styles.capTitle}>iOS</Text><Text style={styles.cap}>SSID & BSSID — available only with Apple’s Wi‑Fi Information entitlement. Signal strength & frequency — not available.</Text></Section>
-    <View style={styles.actions}><Pressable disabled={!items.length} onPress={() => void exportDataset(items, "csv").catch((error: Error) => setNotice(error.message))} style={[styles.action, !items.length && styles.disabled]}><Text style={styles.actionText}>EXPORT CSV</Text></Pressable><Pressable disabled={!items.length} onPress={clear} style={[styles.action, !items.length && styles.disabled]}><Text style={styles.actionText}>CLEAR DATA</Text></Pressable></View><Pressable disabled={!items.length} onPress={() => void exportDataset(items, "json").catch((error: Error) => setNotice(error.message))}><Text style={[styles.json, !items.length && styles.disabledText]}>Export JSON instead</Text></Pressable>
-    <Text style={styles.footnote}>Samples every 25 seconds while the app is open. Background collection is not guaranteed; keep the app in the foreground for a reliable session.</Text>
-  </ScrollView>;
+  const logger = useWifiLogger();
+  const latest = logger.items.at(-1);
+
+  return (
+    <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
+      <View style={styles.hero}>
+        <Text style={styles.eyebrow}>GYM EXPERIMENT</Text>
+        <Text style={styles.title}>Wi‑Fi Floor{"\n"}Data Logger</Text>
+        <Text style={styles.sub}>
+          Collect labeled readings from the Wi‑Fi you are already connected to.
+        </Text>
+      </View>
+
+      <View style={styles.status}>
+        <View
+          style={[
+            styles.dot,
+            logger.wifi.connectionState === "CONNECTED"
+              ? styles.good
+              : styles.muted,
+          ]}
+        />
+        <View>
+          <Text style={styles.statusLabel}>CONNECTED WI‑FI</Text>
+          <Text style={styles.statusValue}>
+            {logger.wifi.connectionState === "CONNECTED"
+              ? formatUnavailable(logger.wifi.ssid)
+              : "Not connected"}
+          </Text>
+        </View>
+        <Text style={styles.rssi}>
+          {logger.wifi.signalStrength === null
+            ? "—"
+            : `${logger.wifi.signalStrength} dBm`}
+        </Text>
+      </View>
+
+      {logger.notice && (
+        <Pressable
+          onPress={() => logger.setNotice(null)}
+          style={styles.notice}
+        >
+          <Text style={styles.noticeText}>{logger.notice}</Text>
+          <Text style={styles.dismiss}>TAP TO DISMISS</Text>
+        </Pressable>
+      )}
+
+      <Text style={styles.label}>CURRENT FLOOR LABEL</Text>
+      <View style={styles.floorRow}>
+        {(["FLOOR_1", "FLOOR_2"] as Floor[]).map((item) => (
+          <Pressable
+            key={item}
+            onPress={() => logger.setFloor(item)}
+            style={[styles.floor, logger.floor === item && styles.floorActive]}
+          >
+            <Text
+              style={[
+                styles.floorText,
+                logger.floor === item && styles.floorTextActive,
+              ]}
+            >
+              {item.replace("_", " ")}
+            </Text>
+            <Text
+              style={[
+                styles.floorSub,
+                logger.floor === item && styles.floorTextActive,
+              ]}
+            >
+              {item === "FLOOR_1" ? "Strength area" : "Cardio area"}
+            </Text>
+          </Pressable>
+        ))}
+      </View>
+
+      <View style={styles.metrics}>
+        <Metric
+          label="RECORDING"
+          value={logger.recording ? (logger.paused ? "PAUSED" : "● YES") : "NO"}
+          accent={logger.recording && !logger.paused}
+        />
+        <Metric label="MEASUREMENTS" value={String(logger.items.length)} />
+        <Metric label="DURATION" value={formatDuration(logger.seconds)} />
+      </View>
+
+      <Pressable
+        onPress={logger.recording ? logger.stop : () => void logger.start()}
+        style={[styles.primary, logger.recording && styles.stop]}
+      >
+        <Text style={styles.primaryText}>
+          {logger.recording ? "STOP RECORDING" : "START RECORDING"}
+        </Text>
+      </Pressable>
+      {logger.paused && (
+        <Pressable onPress={() => void logger.resume()} style={styles.secondary}>
+          <Text style={styles.secondaryText}>RESUME ON ORIGINAL WI‑FI</Text>
+        </Pressable>
+      )}
+
+      <ConnectionSection logger={logger} />
+      <LatestMeasurement latest={latest} />
+      <CapabilitiesSection />
+      <DatasetActions logger={logger} />
+
+      <Text style={styles.footnote}>
+        Samples every 25 seconds while the app is open. Background collection is
+        not guaranteed; keep the app in the foreground for a reliable session.
+      </Text>
+    </ScrollView>
+  );
 }
-function Metric({ label, value, accent = false }: { label: string; value: string; accent?: boolean }) { return <View style={styles.metric}><Text style={styles.metricLabel}>{label}</Text><Text style={[styles.metricValue, accent && styles.accent]}>{value}</Text></View>; }
-function Row({ label, value }: { label: string; value: string | number | null }) { return <View style={styles.row}><Text style={styles.rowLabel}>{label}</Text><Text style={styles.rowValue}>{unavailable(value)}</Text></View>; }
-function Section({ title, children }: { title: string; children: React.ReactNode }) { return <><Text style={styles.section}>{title}</Text><View style={styles.card}>{children}</View></>; }
-const styles = StyleSheet.create({ screen: { flex: 1, backgroundColor: "#F4F7F5" }, content: { padding: 20, paddingTop: 66, paddingBottom: 42, gap: 14 }, hero: { gap: 7, marginBottom: 10 }, eyebrow: { color: "#327A68", fontSize: 12, fontWeight: "800", letterSpacing: 1.4 }, title: { color: "#142B27", fontSize: 36, fontWeight: "800", lineHeight: 39, letterSpacing: -1.1 }, sub: { color: "#66746F", fontSize: 15, lineHeight: 21, maxWidth: 315 }, status: { backgroundColor: "#173F36", borderRadius: 18, padding: 18, flexDirection: "row", alignItems: "center", gap: 11 }, dot: { width: 10, height: 10, borderRadius: 5 }, good: { backgroundColor: "#78E3B4" }, muted: { backgroundColor: "#AAB7B2" }, statusLabel: { color: "#A9C7BC", fontSize: 10, fontWeight: "800", letterSpacing: 1 }, statusValue: { color: "#FFF", fontSize: 17, fontWeight: "700", marginTop: 3, maxWidth: 190 }, rssi: { color: "#78E3B4", fontSize: 15, fontWeight: "800", marginLeft: "auto" }, notice: { backgroundColor: "#FFF0D5", borderRadius: 13, padding: 14, gap: 5 }, noticeText: { color: "#7A4D00", fontSize: 13, lineHeight: 18, fontWeight: "600" }, dismiss: { color: "#9B6500", fontSize: 10, fontWeight: "800", letterSpacing: .8 }, label: { color: "#73817C", fontSize: 11, fontWeight: "800", letterSpacing: 1.1, marginTop: 8 }, floorRow: { flexDirection: "row", gap: 10 }, floor: { flex: 1, borderWidth: 1.5, borderColor: "#D2DDD8", padding: 15, borderRadius: 14, gap: 3 }, floorActive: { backgroundColor: "#D8F0E4", borderColor: "#327A68" }, floorText: { color: "#3A4C46", fontWeight: "800", fontSize: 15 }, floorSub: { color: "#74827D", fontSize: 11 }, floorTextActive: { color: "#19614E" }, metrics: { flexDirection: "row", backgroundColor: "#FFF", paddingVertical: 16, borderRadius: 16 }, metric: { flex: 1, alignItems: "center", gap: 5, borderRightWidth: 1, borderRightColor: "#E7ECE9" }, metricLabel: { color: "#84908C", fontSize: 9, fontWeight: "800", letterSpacing: .6 }, metricValue: { color: "#1E322D", fontSize: 14, fontWeight: "800" }, accent: { color: "#16835F" }, primary: { padding: 18, borderRadius: 14, alignItems: "center", backgroundColor: "#247C66" }, stop: { backgroundColor: "#C95748" }, primaryText: { color: "#FFF", fontWeight: "800", fontSize: 14, letterSpacing: .7 }, secondary: { padding: 14, borderRadius: 12, alignItems: "center", borderWidth: 1.5, borderColor: "#247C66" }, secondaryText: { color: "#19614E", fontWeight: "800", fontSize: 12 }, section: { color: "#52635D", fontSize: 11, fontWeight: "800", letterSpacing: 1, marginTop: 11 }, card: { backgroundColor: "#FFF", borderRadius: 16, paddingHorizontal: 16 }, row: { paddingVertical: 13, flexDirection: "row", justifyContent: "space-between", gap: 15, borderBottomWidth: 1, borderBottomColor: "#EDF0EE" }, rowLabel: { color: "#75827D", fontSize: 13 }, rowValue: { color: "#20352F", fontSize: 13, fontWeight: "700", textAlign: "right", flexShrink: 1 }, empty: { paddingVertical: 16, color: "#75827D", fontSize: 13 }, capTitle: { color: "#1D3E35", fontWeight: "800", fontSize: 13, marginTop: 15 }, cap: { color: "#697973", fontSize: 12, lineHeight: 17, marginTop: 4, marginBottom: 2 }, actions: { flexDirection: "row", gap: 10, marginTop: 8 }, action: { flex: 1, borderWidth: 1.5, borderColor: "#AEBEB7", padding: 14, alignItems: "center", borderRadius: 12 }, actionText: { color: "#31584C", fontWeight: "800", fontSize: 12 }, disabled: { opacity: .42 }, json: { color: "#327A68", textDecorationLine: "underline", fontWeight: "700", fontSize: 13, textAlign: "center", padding: 5 }, disabledText: { color: "#9BA8A3" }, footnote: { color: "#7A8882", fontSize: 11, lineHeight: 16, textAlign: "center", marginTop: 10 } });
+
+function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
+  return (
+    <Section title="CURRENT CONNECTION">
+      <InfoRow label="Connection" value={logger.wifi.connectionState} />
+      <InfoRow label="SSID" value={logger.wifi.ssid} />
+      <InfoRow label="BSSID" value={logger.wifi.bssid} />
+      <InfoRow
+        label="Signal strength"
+        value={logger.wifi.signalStrength === null ? null : `${logger.wifi.signalStrength} dBm`}
+      />
+      <InfoRow
+        label="Frequency"
+        value={logger.wifi.frequency === null ? null : `${logger.wifi.frequency} MHz`}
+      />
+    </Section>
+  );
+}
+
+function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger>["items"][number] | undefined }) {
+  return (
+    <Section title="LATEST MEASUREMENT">
+      {latest ? (
+        <>
+          <InfoRow label="Time" value={new Date(latest.timestamp).toLocaleTimeString()} />
+          <InfoRow label="Floor" value={latest.floor.replace("_", " ")} />
+          <InfoRow label="SSID" value={latest.ssid} />
+          <InfoRow
+            label="Signal"
+            value={latest.signalStrength === null ? null : `${latest.signalStrength} dBm`}
+          />
+        </>
+      ) : (
+        <Text style={styles.empty}>No measurements yet.</Text>
+      )}
+    </Section>
+  );
+}
+
+function CapabilitiesSection() {
+  return (
+    <Section title="PLATFORM CAPABILITIES">
+      <Text style={styles.capTitle}>Android</Text>
+      <Text style={styles.cap}>
+        SSID, BSSID, signal strength & frequency — available with location
+        permission.
+      </Text>
+      <Text style={styles.capTitle}>iOS</Text>
+      <Text style={styles.cap}>
+        SSID & BSSID — available only with Apple’s Wi‑Fi Information entitlement.
+        Signal strength & frequency — not available.
+      </Text>
+    </Section>
+  );
+}
+
+function DatasetActions({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
+  const disabled = !logger.items.length;
+
+  return (
+    <>
+      <View style={styles.actions}>
+        <Pressable
+          disabled={disabled}
+          onPress={() =>
+            void logger.exportDataset(logger.items, "csv").catch((error: Error) =>
+              logger.setNotice(error.message),
+            )
+          }
+          style={[styles.action, disabled && styles.disabled]}
+        >
+          <Text style={styles.actionText}>EXPORT CSV</Text>
+        </Pressable>
+        <Pressable
+          disabled={disabled}
+          onPress={logger.clear}
+          style={[styles.action, disabled && styles.disabled]}
+        >
+          <Text style={styles.actionText}>CLEAR DATA</Text>
+        </Pressable>
+      </View>
+      <Pressable
+        disabled={disabled}
+        onPress={() =>
+          void logger.exportDataset(logger.items, "json").catch((error: Error) =>
+            logger.setNotice(error.message),
+          )
+        }
+      >
+        <Text style={[styles.json, disabled && styles.disabledText]}>
+          Export JSON instead
+        </Text>
+      </Pressable>
+    </>
+  );
+}
