@@ -23,7 +23,8 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "android.permission.ACCESS_FINE_LOCATION"
-      ]
+      ],
+      "package": "com.hamdan_khubaib.WifiLogger"
     },
     "web": {
       "output": "static",
