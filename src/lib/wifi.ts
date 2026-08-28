@@ -36,10 +36,24 @@ export async function getConnectedWifi(): Promise<WifiSnapshot> {
   let bssid = normalise(details?.bssid);
   // These calls inspect only the active Android connection; they never scan nearby access points.
   if (Platform.OS === "android") {
-    const [nativeBssid, nativeRssi, nativeFrequency] = await Promise.allSettled([WifiManager.getBSSID(), WifiManager.getCurrentSignalStrength(), WifiManager.getFrequency()]);
-    if (nativeBssid.status === "fulfilled") bssid = normalise(nativeBssid.value);
-    if (nativeRssi.status === "fulfilled") signalStrength = nativeRssi.value;
-    if (nativeFrequency.status === "fulfilled") frequency = nativeFrequency.value;
+    try {
+      const [nativeBssid, nativeRssi, nativeFrequency] = await Promise.allSettled([
+        WifiManager.getBSSID(),
+        WifiManager.getCurrentSignalStrength(),
+        WifiManager.getFrequency(),
+      ]);
+      if (nativeBssid.status === "fulfilled" && nativeBssid.value) {
+        bssid = normalise(nativeBssid.value) ?? bssid;
+      }
+      if (nativeRssi.status === "fulfilled" && nativeRssi.value !== null && nativeRssi.value !== undefined) {
+        signalStrength = nativeRssi.value;
+      }
+      if (nativeFrequency.status === "fulfilled" && nativeFrequency.value !== null && nativeFrequency.value !== undefined) {
+        frequency = nativeFrequency.value;
+      }
+    } catch (e) {
+      console.warn("WifiManager query bypassed or failed in background context:", e);
+    }
   }
   return {
     connectionState: "CONNECTED",
@@ -50,3 +64,4 @@ export async function getConnectedWifi(): Promise<WifiSnapshot> {
     frequency,
   };
 }
+

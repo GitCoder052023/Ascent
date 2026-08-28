@@ -5,6 +5,7 @@ import {
   PermissionsAndroid,
   Platform,
 } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   clearMeasurements,
   createMeasurement,
@@ -22,7 +23,11 @@ import {
   startBackgroundLoggingAsync,
   stopBackgroundLoggingAsync,
   setBackgroundFloor,
+  isBackgroundLoggingActiveAsync,
 } from "../services/backgroundTask";
+
+const KEY_STARTED = "@wifi_logger_started";
+const KEY_NETWORK = "@wifi_logger_network";
 
 export function useWifiLogger() {
   const [floor, setFloor] = useState<Floor>("FLOOR_1");
@@ -58,17 +63,41 @@ export function useWifiLogger() {
       .then(setItems)
       .catch(() => setNotice("Could not load the saved dataset."));
     void refresh();
+    void syncBackgroundStatus();
 
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void refresh();
         void loadMeasurements().then(setItems);
+        void syncBackgroundStatus();
       }
     });
 
     return () => subscription.remove();
   }, []);
   /* eslint-enable react-hooks/exhaustive-deps */
+
+  async function syncBackgroundStatus() {
+    try {
+      const active = await isBackgroundLoggingActiveAsync();
+      if (active) {
+        setRecording(true);
+        const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
+        const storedNetwork = await AsyncStorage.getItem(KEY_NETWORK);
+        if (storedStarted) {
+          const parsed = parseInt(storedStarted, 10);
+          if (!isNaN(parsed)) setStarted(parsed);
+        } else {
+          setStarted(Date.now());
+        }
+        if (storedNetwork) {
+          setNetwork(storedNetwork);
+        }
+      }
+    } catch {
+      // Ignore background sync errors
+    }
+  }
 
   useEffect(() => {
     if (!recording || !started) {
@@ -195,16 +224,25 @@ export function useWifiLogger() {
       return;
     }
 
+    const now = Date.now();
     setNetwork(current.ssid);
-    setStarted(Date.now());
+    setStarted(now);
     setSeconds(0);
     setPaused(false);
     setRecording(true);
     setNotice(null);
 
+    await AsyncStorage.setItem(KEY_STARTED, String(now));
+    await AsyncStorage.setItem(KEY_NETWORK, current.ssid);
+
     // Register background service
     try {
-      await startBackgroundLoggingAsync(floor);
+      const bgOk = await startBackgroundLoggingAsync(floor);
+      if (!bgOk) {
+        setNotice(
+          "Background location permission ('Allow all the time') is required to log Wi-Fi in the background."
+        );
+      }
     } catch (e) {
       console.warn("Could not start background task:", e);
     }
@@ -215,6 +253,8 @@ export function useWifiLogger() {
   async function stop() {
     setRecording(false);
     setPaused(false);
+    await AsyncStorage.removeItem(KEY_STARTED);
+    await AsyncStorage.removeItem(KEY_NETWORK);
     try {
       await stopBackgroundLoggingAsync();
     } catch (e) {
@@ -275,3 +315,4 @@ export function useWifiLogger() {
     wifi,
   };
 }
+
