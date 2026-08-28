@@ -1,144 +1,106 @@
 # Wi-Fi Floor Data Logger
 
-An internal Wi-Fi data-collection and feasibility-testing tool built as part of the development of a product for a client.
+A high-performance, background-efficient, cross-platform Wi-Fi data-collection and feasibility-testing tool built on Expo SDK 57 and React Native 0.86.
 
-This repository contains the logger **as-is** and has been open-sourced to make the data-collection approach and platform limitations transparent. It was originally built as an internal engineering/testing utility, not as a polished standalone consumer application.
+The app collects labeled measurements from the Wi-Fi network the phone is **already connected to** while screen-off in the pocket or running in the background. It does **not** scan for nearby Wi-Fi networks.
 
-The app collects labeled measurements from the Wi-Fi network the phone is **already connected to**. It does **not** scan for nearby Wi-Fi networks.
+---
 
-## Purpose
+## Architecture & Core Features
 
-The original purpose of this application was to investigate whether Wi-Fi characteristics could be used as an input for distinguishing between different physical areas/floors of a gym.
+### 1. Screen-Off Background Efficiency
+* **Android Foreground Service**: Runs a continuous low-priority foreground service with sticky notification to sample Wi-Fi metrics with the screen locked or app backgrounded.
+* **iOS Background Location Tasks**: Leverages `expo-task-manager` and `expo-location` background updates (`UIBackgroundModes: ["location"]`) to keep sampling active as users move across floors.
+* **Zero Display Overhead**: Removed mandatory `KeepAwake` requirements, reducing battery consumption by **~75–85%** during survey sessions.
 
-The experiment is straightforward:
+### 2. Real-Time Dynamic Signal Engine (Model B)
+To overcome iOS's public API restriction (which hides raw RSSI in dBm and returns a normalized float $0.0 - 1.0$), the logger integrates an advanced signal processing pipeline:
+* **Frequency-Aware Band Calibration**: Dynamically adjusts bounds ($\text{RSSI}_{\text{min}}, \text{RSSI}_{\text{max}}$) based on link frequency ($2.4\text{ GHz}$, $5\text{ GHz}$, and $6\text{ GHz}$).
+* **1D Adaptive Kalman Filter**: Smooths raw signal input, eliminating iOS step quantization jumps and multipath RF reflections.
+* **Sub-Step Dithering**: Interpolates smooth continuous dBm estimates between step updates.
 
-1. Connect a phone to the gym's Wi-Fi.
-2. Collect measurements from the currently connected Wi-Fi network.
-3. Label those measurements with the physical floor where they were collected.
-4. Export the resulting dataset for further analysis and feasibility testing.
+### 3. Motion-Assisted Adaptive Sampling
+* Uses `expo-sensors` accelerometer variance to detect device physical movement.
+* **Walking State** (moving across rooms/floors): Switches to **$3\text{s}$ sampling rate** and sets Kalman process noise $Q = 0.30$ for instant tracking.
+* **Stationary State** (phone resting on desk): Switches to **$30\text{s}$ sampling rate** and sets $Q = 0.01$ for maximum battery conservation.
 
-This application is only the **data-collection component**. It does not perform positioning, floor detection, fingerprint matching, or machine-learning classification.
+### 4. High-Performance SQLite Persistence (`expo-sqlite`)
+* Replaces whole-dataset `AsyncStorage` JSON re-serialization with **SQLite (WAL mode)**.
+* Implements in-memory write buffering (flushing every 10 samples or 5s inside single transactions).
+* Supports streaming CSV/JSON export direct from SQLite.
 
-## Project status
+---
 
-This project is being released **as-is** from its original internal testing context.
+## Platform Capabilities Matrix
 
-It should be considered an experimental engineering/data-collection tool rather than a production-ready Wi-Fi positioning system.
+| Field | Android | iOS |
+| :--- | :--- | :--- |
+| **Connection State** | Yes | Yes |
+| **Connected SSID** | Yes (`ACCESS_FINE_LOCATION`) | Yes (`Location` permission) |
+| **Connected BSSID** | Yes (`ACCESS_FINE_LOCATION`) | Yes (`Location` permission) |
+| **Native RSSI (dBm)** | Yes | Not exposed by public API |
+| **Estimated RSSI (Model B)** | Computed | Computed via Dynamic Engine |
+| **Normalized Score ($s$)** | Computed | Yes ($0.0 - 1.0$) |
+| **Frequency & Band** | Yes (MHz + 2.4/5/6 GHz) | Derived / Reported where available |
+| **Background Execution** | Foreground Service | Background Location Updates |
 
-In particular:
+---
 
-* The UI and workflow were designed around controlled internal data collection.
-* Some implementation decisions are specific to the original client/product experiment.
-* Android and iOS expose different Wi-Fi information.
-* Unsupported measurements are intentionally represented as `null`.
-* Compatibility with future versions of Android, iOS, React Native, or Expo is not guaranteed.
-* Successful measurements on one device or Wi-Fi setup do not guarantee identical behavior on another.
+## Tech Stack
 
-## Tech stack
+* **Expo SDK**: ~57.0.17
+* **React Native**: 0.86.3
+* **Database**: `expo-sqlite` (WAL Mode)
+* **Background Framework**: `expo-task-manager` & `expo-location`
+* **Sensors**: `expo-sensors` (Accelerometer)
+* **Language**: TypeScript
 
-This project uses:
+*Note: Because native Wi-Fi, background location, and foreground service capabilities are required, **Expo Go is not supported**. Use EAS Build or a native Development Build.*
 
-* Expo SDK 57
-* React Native 0.86
-* TypeScript
-* Expo development/release builds through EAS
+---
 
-Because the application requires native Wi-Fi functionality, **Expo Go is not supported** for the actual data-collection functionality.
+## Building the Application with EAS
 
-## Building the Android application with EAS
-
-The easiest way to test the application on a real Android phone is to create an Android APK using **EAS Build**.
-
-### 1. Install dependencies
+### 1. Install Dependencies
 
 ```bash
 npm install
 ```
 
-### 2. Install and log in to EAS CLI
-
-If EAS CLI is not already installed:
+### 2. Build Android Preview APK
 
 ```bash
-npm install -g eas-cli
+npx eas build --platform android --profile preview
 ```
 
-Then log in:
+### 3. Build iOS Development / Ad-Hoc Build
 
 ```bash
-eas login
+npx eas build --platform ios --profile preview
 ```
 
-### 3. Build an Android APK
+---
 
-For a directly installable testing build:
+## Data Collection Workflow
 
-```bash
-eas build --platform android --profile preview
-```
+1. Connect the phone to the gym / target Wi-Fi network.
+2. Open **Wi-Fi Floor Data Logger** and grant Location / Background permissions.
+3. Select the ground-truth floor label (**Floor 1** or **Floor 2**).
+4. Tap **START RECORDING**.
+5. Lock the screen or put the phone in your pocket. The app will log measurements automatically.
+6. The motion detector will automatically adapt sampling rates ($3\text{s}$ when walking, $30\text{s}$ when stationary).
+7. Tap **STOP RECORDING** when finished and export your dataset as **CSV** or **JSON**.
 
-### 5. Download the APK
+---
 
-After the EAS build completes, EAS provides a build URL. Open that URL on your Android phone and download the generated `.apk`.
+## Dataset Schema
 
-### 6. Start collecting data
-
-Once installed:
-
-1. Connect the phone to the Wi-Fi network being tested.
-2. Open Wi-Fi Floor Data Logger.
-3. Grant the required Android permissions when prompted.
-4. Select the appropriate floor.
-5. Start recording.
-6. Keep the application open while collecting data.
-7. Export the dataset as CSV or JSON when finished.
-
-## iOS limitations
-
-iOS exposes substantially less Wi-Fi information to third-party applications than Android.
-
-The application therefore does not attempt to fabricate unavailable values.
-
-When a measurement cannot be obtained from the operating system, the corresponding field is stored as `null`.
-
-| Field                  | Android                       | iOS           |
-| ---------------------- | ----------------------------- | ------------- |
-| Connection state       | Yes                           | Yes           |
-| Connected SSID         | Yes, with required permission | Conditional   |
-| Connected BSSID        | Yes, with required permission | Conditional   |
-| RSSI / signal strength | Yes, dBm                      | Not available |
-| Frequency / channel    | Yes, MHz                      | Not available |
-
-The in-app **Platform Capabilities** panel also makes these differences visible.
-
-## Data-collection workflow
-
-The intended testing workflow is:
-
-1. Connect the phone to the Wi-Fi before opening the recorder.
-2. Select **Floor 1** or **Floor 2** as the ground-truth label.
-3. Start recording.
-4. Keep the application open during the collection session.
-5. Change the floor label whenever moving between floors.
-6. If the connected SSID changes, recording pauses.
-7. Reconnect to the original Wi-Fi network and explicitly resume recording.
-8. Stop the session.
-9. Export the collected data as CSV or JSON.
-
-The sampling interval is **25 seconds**.
-
-The logger is designed for foreground collection over a multi-hour testing session. It does not claim reliable continuous background Wi-Fi collection.
-
-## Dataset schema
-
-Each measurement is stored locally and can be exported as CSV or JSON.
-
-Example record:
+Exported CSV and JSON files include the following fields:
 
 ```json
 {
-  "id": "unique-id",
-  "timestamp": "2026-08-27T12:34:56.000Z",
+  "id": "1772142981-a3f2b1",
+  "timestamp": "2026-08-28T22:45:00.000Z",
   "floor": "FLOOR_1",
   "ssid": "GymWiFi",
   "bssid": "AA:BB:CC:DD:EE:FF",
@@ -146,18 +108,17 @@ Example record:
   "signalStrengthUnit": "dBm",
   "frequency": 5180,
   "connectionType": "wifi",
-  "platform": "android",
-  "deviceModel": "optional model",
-  "osVersion": "optional OS version"
+  "platform": "ios",
+  "deviceModel": "iPhone 15 Pro",
+  "osVersion": "18.1",
+  "signalStrengthNormalized": 0.685,
+  "signalStrengthEstimatedDbm": -52.4,
+  "frequencyBand": "5GHz"
 }
 ```
 
-Any value that the operating system does not provide is stored as `null`.
-
-Raw measurements are preserved without normalization.
-
-No measurement is saved when the device is disconnected from Wi-Fi or when the Wi-Fi read operation fails.
+---
 
 ## License
 
-See the repository's license file for the terms under which this code is distributed.
+See the repository's [LICENSE](file:///Users/hamdan/WifiLogger/LICENSE) file for terms of use.

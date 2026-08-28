@@ -17,7 +17,7 @@ export default function Index() {
         <Text style={styles.eyebrow}>GYM EXPERIMENT</Text>
         <Text style={styles.title}>Wi‑Fi Floor{"\n"}Data Logger</Text>
         <Text style={styles.sub}>
-          Collect labeled readings from the Wi‑Fi you are already connected to.
+          Background-efficient Wi‑Fi logger with real-time dynamic signal estimation.
         </Text>
       </View>
 
@@ -30,7 +30,7 @@ export default function Index() {
               : styles.muted,
           ]}
         />
-        <View>
+        <View style={{ flex: 1 }}>
           <Text style={styles.statusLabel}>CONNECTED WI‑FI</Text>
           <Text style={styles.statusValue}>
             {logger.wifi.connectionState === "CONNECTED"
@@ -38,11 +38,20 @@ export default function Index() {
               : "Not connected"}
           </Text>
         </View>
-        <Text style={styles.rssi}>
-          {logger.wifi.signalStrength === null
-            ? "—"
-            : `${logger.wifi.signalStrength} dBm`}
-        </Text>
+        <View style={{ alignItems: "flex-end" }}>
+          <Text style={styles.rssi}>
+            {logger.lastProcessed.estimatedDbm !== null
+              ? `${logger.lastProcessed.estimatedDbm} dBm`
+              : logger.wifi.signalStrength === null
+              ? "—"
+              : `${logger.wifi.signalStrength} dBm`}
+          </Text>
+          {logger.lastProcessed.frequencyBand !== "UNKNOWN" && (
+            <Text style={{ fontSize: 11, color: "#208AEF", fontWeight: "600" }}>
+              {logger.lastProcessed.frequencyBand}
+            </Text>
+          )}
+        </View>
       </View>
 
       {logger.notice && (
@@ -93,6 +102,25 @@ export default function Index() {
         <Metric label="DURATION" value={formatDuration(logger.seconds)} />
       </View>
 
+      <View style={styles.floorRow}>
+        <View style={[styles.floor, { flex: 1, paddingVertical: 10 }]}>
+          <Text style={{ fontSize: 10, color: "#8E8E93", fontWeight: "600" }}>
+            MOTION STATE
+          </Text>
+          <Text style={{ fontSize: 14, fontWeight: "700", color: "#1C1C1E", marginTop: 2 }}>
+            {logger.isMoving ? "🚶 WALKING" : "🧘 STATIONARY"}
+          </Text>
+        </View>
+        <View style={[styles.floor, { flex: 1, paddingVertical: 10 }]}>
+          <Text style={{ fontSize: 10, color: "#8E8E93", fontWeight: "600" }}>
+            ADAPTIVE RATE
+          </Text>
+          <Text style={{ fontSize: 14, fontWeight: "700", color: "#208AEF", marginTop: 2 }}>
+            {Math.round(logger.sampleIntervalMs / 1000)}s INTERVAL
+          </Text>
+        </View>
+      </View>
+
       <Pressable
         onPress={logger.recording ? logger.stop : () => void logger.start()}
         style={[styles.primary, logger.recording && styles.stop]}
@@ -113,8 +141,7 @@ export default function Index() {
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
-        Samples every 25 seconds while the app is open. Background collection is
-        not guaranteed; keep the app in the foreground for a reliable session.
+        Background logging is enabled. The app continues logging Wi-Fi measurements smoothly even when your screen is locked or the app is backgrounded.
       </Text>
     </ScrollView>
   );
@@ -122,17 +149,33 @@ export default function Index() {
 
 function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
   return (
-    <Section title="CURRENT CONNECTION">
+    <Section title="CURRENT CONNECTION & SIGNAL ENGINE">
       <InfoRow label="Connection" value={logger.wifi.connectionState} />
       <InfoRow label="SSID" value={logger.wifi.ssid} />
       <InfoRow label="BSSID" value={logger.wifi.bssid} />
       <InfoRow
-        label="Signal strength"
+        label="Raw RSSI (Native)"
         value={logger.wifi.signalStrength === null ? null : `${logger.wifi.signalStrength} dBm`}
       />
       <InfoRow
-        label="Frequency"
-        value={logger.wifi.frequency === null ? null : `${logger.wifi.frequency} MHz`}
+        label="Frequency & Band"
+        value={
+          logger.wifi.frequency === null
+            ? null
+            : `${logger.wifi.frequency} MHz (${logger.lastProcessed.frequencyBand})`
+        }
+      />
+      <InfoRow
+        label="Normalized Score (s)"
+        value={logger.lastProcessed.normalizedScore}
+      />
+      <InfoRow
+        label="Dynamic Model B RSSI"
+        value={
+          logger.lastProcessed.estimatedDbm === null
+            ? null
+            : `${logger.lastProcessed.estimatedDbm} dBm`
+        }
       />
     </Section>
   );
@@ -148,7 +191,13 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
           <InfoRow label="SSID" value={latest.ssid} />
           <InfoRow
             label="Signal"
-            value={latest.signalStrength === null ? null : `${latest.signalStrength} dBm`}
+            value={
+              latest.signalStrengthEstimatedDbm !== null && latest.signalStrengthEstimatedDbm !== undefined
+                ? `${latest.signalStrengthEstimatedDbm} dBm (Est)`
+                : latest.signalStrength === null
+                ? null
+                : `${latest.signalStrength} dBm`
+            }
           />
         </>
       ) : (
@@ -160,16 +209,14 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
 
 function CapabilitiesSection() {
   return (
-    <Section title="PLATFORM CAPABILITIES">
-      <Text style={styles.capTitle}>Android</Text>
+    <Section title="PLATFORM & SIGNAL ENGINE CAPABILITIES">
+      <Text style={styles.capTitle}>Android (Foreground Service)</Text>
       <Text style={styles.cap}>
-        SSID, BSSID, signal strength & frequency — available with location
-        permission.
+        Native RSSI, BSSID & Frequency continuous sampling via Foreground Service with sticky notification.
       </Text>
-      <Text style={styles.capTitle}>iOS</Text>
+      <Text style={styles.capTitle}>iOS (Background Location + Dynamic Model B Engine)</Text>
       <Text style={styles.cap}>
-        SSID & BSSID — available only with Apple’s Wi‑Fi Information entitlement.
-        Signal strength & frequency — not available.
+        SSID & BSSID captured via Location triggers. Signal estimation converts normalized scores back to dBm using frequency-aware dynamic bounds and Kalman filtering.
       </Text>
     </Section>
   );

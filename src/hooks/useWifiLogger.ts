@@ -6,10 +6,6 @@ import {
   Platform,
 } from "react-native";
 import {
-  activateKeepAwakeAsync,
-  deactivateKeepAwake,
-} from "expo-keep-awake";
-import {
   clearMeasurements,
   createMeasurement,
   exportDataset,
@@ -19,7 +15,14 @@ import {
   type Measurement,
 } from "../lib/dataset";
 import { getConnectedWifi, type WifiSnapshot } from "../lib/wifi";
-import { EMPTY_WIFI, SAMPLE_MS } from "../constants/app";
+import { EMPTY_WIFI } from "../constants/app";
+import { globalSignalEngine } from "../lib/signalEngine";
+import { useMotionDetector } from "./useMotionDetector";
+import {
+  startBackgroundLoggingAsync,
+  stopBackgroundLoggingAsync,
+  setBackgroundFloor,
+} from "../services/backgroundTask";
 
 export function useWifiLogger() {
   const [floor, setFloor] = useState<Floor>("FLOOR_1");
@@ -31,19 +34,25 @@ export function useWifiLogger() {
   const [paused, setPaused] = useState(false);
   const [network, setNetwork] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [lastProcessed, setLastProcessed] = useState<{
+    normalizedScore: number | null;
+    estimatedDbm: number | null;
+    frequencyBand: string;
+  }>({
+    normalizedScore: null,
+    estimatedDbm: null,
+    frequencyBand: "UNKNOWN",
+  });
+
+  const { isMoving, motionState, sampleIntervalMs } = useMotionDetector();
   const interval = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastSample = useRef<string | null>(null);
+  const lastSampleKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (recording && !paused) {
-      void activateKeepAwakeAsync("wifi-logger");
+    setBackgroundFloor(floor);
+  }, [floor]);
 
-      return () => {
-        void deactivateKeepAwake("wifi-logger");
-      };
-    }
-  }, [recording, paused]);
-
+  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     void loadMeasurements()
       .then(setItems)
@@ -53,11 +62,13 @@ export function useWifiLogger() {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
         void refresh();
+        void loadMeasurements().then(setItems);
       }
     });
 
     return () => subscription.remove();
   }, []);
+  /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
     if (!recording || !started) {
@@ -66,61 +77,65 @@ export function useWifiLogger() {
 
     const clock = setInterval(
       () => setSeconds(Math.floor((Date.now() - started) / 1000)),
-      1000,
+      1000
     );
 
     return () => clearInterval(clock);
   }, [recording, started]);
 
-  // `sample` intentionally reads the current floor/network closure; these state values restart the timer when changed.
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     if (!recording || paused) {
       return;
     }
 
-    interval.current = setInterval(() => void sample(), SAMPLE_MS);
+    interval.current = setInterval(() => void sample(), sampleIntervalMs);
 
     return () => {
       if (interval.current) {
         clearInterval(interval.current);
       }
     };
-  }, [recording, paused, floor, network]);
+  }, [recording, paused, floor, network, sampleIntervalMs, isMoving]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   async function refresh() {
     try {
-      setWifi(await getConnectedWifi());
+      const current = await getConnectedWifi();
+      setWifi(current);
+
+      const processed = globalSignalEngine.processSignal(
+        current.signalStrength !== null ? current.signalStrength / 100 : null,
+        current.frequency,
+        isMoving
+      );
+      setLastProcessed(processed);
     } catch {
       setWifi(EMPTY_WIFI);
     }
   }
 
   async function requestPermission() {
-    if (Platform.OS !== "android") {
-      return true;
+    if (Platform.OS === "android") {
+      const result = await PermissionsAndroid.request(
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        {
+          title: "Wi-Fi connection access",
+          message:
+            "Android requires location access to read connected Wi-Fi details in foreground and background.",
+          buttonPositive: "Allow",
+          buttonNegative: "Not now",
+        }
+      );
+
+      if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+        setNotice(
+          "Wi-Fi details need Location permission. Enable it in Settings before recording."
+        );
+        return false;
+      }
     }
-
-    const result = await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      {
-        title: "Wi-Fi connection access",
-        message:
-          "Android requires location access to show details of the Wi-Fi you are already connected to. This app never scans nearby networks.",
-        buttonPositive: "Allow",
-        buttonNegative: "Not now",
-      },
-    );
-
-    if (result === PermissionsAndroid.RESULTS.GRANTED) {
-      return true;
-    }
-
-    setNotice(
-      "Wi-Fi details need Android location access. Enable it in Settings before recording.",
-    );
-    return false;
+    return true;
   }
 
   async function sample() {
@@ -130,7 +145,7 @@ export function useWifiLogger() {
 
       if (current.connectionState !== "CONNECTED" || !current.ssid) {
         setNotice(
-          "Recording is waiting: connect to Wi-Fi to collect a measurement.",
+          "Recording is waiting: connect to Wi-Fi to collect a measurement."
         );
         return;
       }
@@ -138,27 +153,31 @@ export function useWifiLogger() {
       if (network && current.ssid !== network) {
         setPaused(true);
         setNotice(
-          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${current.ssid}. Recording paused.`,
+          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${current.ssid}. Recording paused.`
         );
         return;
       }
 
-      const item = createMeasurement(floor, current);
+      const processed = globalSignalEngine.processSignal(
+        current.signalStrength !== null ? current.signalStrength / 100 : null,
+        current.frequency,
+        isMoving
+      );
+      setLastProcessed(processed);
+
+      const item = createMeasurement(floor, current, processed);
       const key = `${item.timestamp.slice(0, 19)}-${item.ssid}-${item.floor}`;
 
-      if (key === lastSample.current) {
+      if (key === lastSampleKey.current) {
         return;
       }
 
-      lastSample.current = key;
-      setItems((old) => {
-        const next = [...old, item];
-        void saveMeasurements(next);
-        return next;
-      });
+      lastSampleKey.current = key;
+      await saveMeasurements([item]);
+      setItems((old) => [...old, item]);
     } catch {
       setNotice(
-        "A Wi-Fi reading failed. Recording will retry at the next interval.",
+        "A Wi-Fi reading failed. Recording will retry at the next interval."
       );
     }
   }
@@ -172,7 +191,7 @@ export function useWifiLogger() {
     setWifi(current);
 
     if (current.connectionState !== "CONNECTED" || !current.ssid) {
-      setNotice("Connect to the gym Wi-Fi first, then start recording.");
+      setNotice("Connect to the Wi-Fi network first, then start recording.");
       return;
     }
 
@@ -182,12 +201,25 @@ export function useWifiLogger() {
     setPaused(false);
     setRecording(true);
     setNotice(null);
+
+    // Register background service
+    try {
+      await startBackgroundLoggingAsync(floor);
+    } catch (e) {
+      console.warn("Could not start background task:", e);
+    }
+
     await sample();
   }
 
-  function stop() {
+  async function stop() {
     setRecording(false);
     setPaused(false);
+    try {
+      await stopBackgroundLoggingAsync();
+    } catch (e) {
+      console.warn("Could not stop background task:", e);
+    }
     setNotice("Recording stopped. Your dataset remains stored on this device.");
   }
 
@@ -218,7 +250,7 @@ export function useWifiLogger() {
             setItems([]);
           },
         },
-      ],
+      ]
     );
   }
 
@@ -226,11 +258,15 @@ export function useWifiLogger() {
     clear,
     exportDataset,
     floor,
+    isMoving,
     items,
+    lastProcessed,
+    motionState,
     notice,
     paused,
     recording,
     resume,
+    sampleIntervalMs,
     seconds,
     setFloor,
     setNotice,

@@ -11,6 +11,13 @@
       "icon": "./assets/expo.icon",
       "entitlements": {
         "com.apple.developer.networking.wifi-info": true
+      },
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location"
+        ],
+        "NSLocationWhenInUseUsageDescription": "WifiLogger needs location permission to access connected Wi-Fi SSID and signal metrics.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "WifiLogger needs background location access to map Wi-Fi signal strength continuously while moving across floors."
       }
     },
     "android": {
@@ -22,7 +29,11 @@
       },
       "predictiveBackGestureEnabled": false,
       "permissions": [
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ],
       "package": "com.hamdan_khubaib.WifiLogger"
     },
@@ -33,6 +44,15 @@
     "plugins": [
       "expo-router",
       "react-native-wifi-reborn",
+      "expo-sqlite",
+      "expo-sensors",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "WifiLogger needs location access to map Wi-Fi signal strength in background.",
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
       [
         "expo-splash-screen",
         {
