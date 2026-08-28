@@ -15,7 +15,7 @@ import {
   type Floor,
   type Measurement,
 } from "../lib/dataset";
-import { getConnectedWifi, type WifiSnapshot } from "../lib/wifi";
+import { getConnectedWifi, normalizeRssiToScore, type WifiSnapshot } from "../lib/wifi";
 import { EMPTY_WIFI } from "../constants/app";
 import { globalSignalEngine } from "../lib/signalEngine";
 import { useMotionDetector } from "./useMotionDetector";
@@ -133,8 +133,9 @@ export function useWifiLogger() {
       const current = await getConnectedWifi();
       setWifi(current);
 
+      const rawScore = normalizeRssiToScore(current.signalStrength);
       const processed = globalSignalEngine.processSignal(
-        current.signalStrength !== null ? current.signalStrength / 100 : null,
+        rawScore,
         current.frequency,
         isMoving
       );
@@ -187,8 +188,9 @@ export function useWifiLogger() {
         return;
       }
 
+      const rawScore = normalizeRssiToScore(current.signalStrength);
       const processed = globalSignalEngine.processSignal(
-        current.signalStrength !== null ? current.signalStrength / 100 : null,
+        rawScore,
         current.frequency,
         isMoving
       );

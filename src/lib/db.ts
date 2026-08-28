@@ -215,10 +215,8 @@ const csvCell = (item: unknown) => `"${String(item ?? "").replaceAll('"', '""')}
 
 export async function exportDatasetFromDb(format: "csv" | "json"): Promise<void> {
   const items = await getAllMeasurements();
-  const file = new File(
-    Paths.cache,
-    `wifi-floor-dataset-${new Date().toISOString().replaceAll(":", "-")}.${format}`
-  );
+  const filename = `wifi-floor-dataset-${new Date().toISOString().replaceAll(":", "-")}.${format}`;
+  const file = new File(Paths.cache, filename);
 
   const contents =
     format === "json"

@@ -1,16 +1,19 @@
 import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
-import { getConnectedWifi } from "../lib/wifi";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getConnectedWifi, normalizeRssiToScore } from "../lib/wifi";
 import { globalSignalEngine } from "../lib/signalEngine";
 import { saveMeasurementBuffered, flushWriteBuffer, Floor } from "../lib/db";
 import { createMeasurement } from "../lib/dataset";
 
 export const WIFI_LOGGER_BACKGROUND_TASK = "wifi-logger-background-task";
+export const KEY_ACTIVE_FLOOR = "@wifi_logger_active_floor";
 
 let activeFloor: Floor = "FLOOR_1";
 
 export function setBackgroundFloor(floor: Floor) {
   activeFloor = floor;
+  void AsyncStorage.setItem(KEY_ACTIVE_FLOOR, floor).catch(() => {});
 }
 
 TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ error }) => {
@@ -25,12 +28,16 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ error }) => {
       return;
     }
 
+    const storedFloor = (await AsyncStorage.getItem(KEY_ACTIVE_FLOOR)) as Floor | null;
+    const currentFloor = storedFloor === "FLOOR_1" || storedFloor === "FLOOR_2" ? storedFloor : activeFloor;
+
+    const rawScore = normalizeRssiToScore(wifi.signalStrength);
     const processed = globalSignalEngine.processSignal(
-      wifi.signalStrength !== null ? wifi.signalStrength / 100 : null,
+      rawScore,
       wifi.frequency
     );
 
-    const item = createMeasurement(activeFloor, wifi, processed);
+    const item = createMeasurement(currentFloor, wifi, processed);
     await saveMeasurementBuffered(item);
     await flushWriteBuffer();
   } catch (err) {
