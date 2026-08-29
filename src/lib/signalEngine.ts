@@ -20,6 +20,47 @@ export function getFrequencyBand(frequency: number | null): FrequencyBand {
   return "UNKNOWN";
 }
 
+/** iOS-only: reverse-engineer dBm from a normalized/quantized score. */
+export type SignalSource = "android-native" | "ios-estimated";
+
+export type ProcessedSignal = {
+  normalizedScore: number | null;
+  estimatedDbm: number | null;
+  frequencyBand: FrequencyBand;
+  source: SignalSource;
+};
+
+/** Android WifiInfo.INVALID_RSSI is -127; treat 0 and positive as non-dBm. */
+export function isValidAndroidRssiDbm(value: number | null): value is number {
+  return value !== null && !isNaN(value) && value < 0 && value > -127;
+}
+
+export function nativeAndroidSignal(
+  rssiDbm: number | null,
+  frequency: number | null
+): ProcessedSignal {
+  const frequencyBand = getFrequencyBand(frequency);
+  if (!isValidAndroidRssiDbm(rssiDbm)) {
+    return {
+      normalizedScore: null,
+      estimatedDbm: null,
+      frequencyBand,
+      source: "android-native",
+    };
+  }
+
+  const bounds = BAND_BOUNDS[frequencyBand];
+  const span = bounds.maxDbm - bounds.minDbm;
+  const score = span === 0 ? 0 : (rssiDbm - bounds.minDbm) / span;
+
+  return {
+    normalizedScore: Math.round(Math.max(0, Math.min(1, score)) * 1000) / 1000,
+    estimatedDbm: rssiDbm,
+    frequencyBand,
+    source: "android-native",
+  };
+}
+
 export class SignalEstimationEngine {
   private xEst: number | null = null; // Estimated normalized score
   private P: number = 1.0;            // Error covariance
@@ -36,11 +77,7 @@ export class SignalEstimationEngine {
     rawScore: number | null,
     frequency: number | null,
     isMoving: boolean = false
-  ): {
-    normalizedScore: number | null;
-    estimatedDbm: number | null;
-    frequencyBand: FrequencyBand;
-  } {
+  ): ProcessedSignal {
     const band = getFrequencyBand(frequency);
     const bounds = BAND_BOUNDS[band];
 
@@ -49,6 +86,7 @@ export class SignalEstimationEngine {
         normalizedScore: null,
         estimatedDbm: null,
         frequencyBand: band,
+        source: "ios-estimated",
       };
     }
 
@@ -83,6 +121,7 @@ export class SignalEstimationEngine {
       normalizedScore: Math.round(smoothedScore * 1000) / 1000,
       estimatedDbm,
       frequencyBand: band,
+      source: "ios-estimated",
     };
   }
 

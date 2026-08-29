@@ -17,7 +17,8 @@ export default function Index() {
         <Text style={styles.eyebrow}>GYM EXPERIMENT</Text>
         <Text style={styles.title}>Wi‑Fi Floor{"\n"}Data Logger</Text>
         <Text style={styles.sub}>
-          Background-efficient Wi‑Fi logger with real-time dynamic signal estimation.
+          Background-efficient Wi‑Fi logger. Android uses native RSSI in dBm; iOS
+          estimates dBm from quantized scores.
         </Text>
       </View>
 
@@ -46,11 +47,15 @@ export default function Index() {
               ? "—"
               : `${logger.wifi.signalStrength} dBm`}
           </Text>
-          {logger.lastProcessed.frequencyBand !== "UNKNOWN" && (
-            <Text style={{ fontSize: 11, color: "#208AEF", fontWeight: "600" }}>
-              {logger.lastProcessed.frequencyBand}
-            </Text>
-          )}
+          <Text style={{ fontSize: 11, color: "#208AEF", fontWeight: "600" }}>
+            {logger.lastProcessed.source === "android-native"
+              ? logger.lastProcessed.frequencyBand !== "UNKNOWN"
+                ? `${logger.lastProcessed.frequencyBand} · native`
+                : "native"
+              : logger.lastProcessed.frequencyBand !== "UNKNOWN"
+                ? `${logger.lastProcessed.frequencyBand} · est`
+                : "est"}
+          </Text>
         </View>
       </View>
 
@@ -148,13 +153,14 @@ export default function Index() {
 }
 
 function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
+  const nativeAndroid = logger.lastProcessed.source === "android-native";
   return (
     <Section title="CURRENT CONNECTION & SIGNAL ENGINE">
       <InfoRow label="Connection" value={logger.wifi.connectionState} />
       <InfoRow label="SSID" value={logger.wifi.ssid} />
       <InfoRow label="BSSID" value={logger.wifi.bssid} />
       <InfoRow
-        label="Raw RSSI (Native)"
+        label={nativeAndroid ? "RSSI (WifiInfo.getRssi)" : "Raw RSSI (Native)"}
         value={logger.wifi.signalStrength === null ? null : `${logger.wifi.signalStrength} dBm`}
       />
       <InfoRow
@@ -166,17 +172,19 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
         }
       />
       <InfoRow
-        label="Normalized Score (s)"
+        label={nativeAndroid ? "Normalized (from native dBm)" : "Normalized Score (Kalman)"}
         value={logger.lastProcessed.normalizedScore}
       />
-      <InfoRow
-        label="RSSI"
-        value={
-          logger.lastProcessed.estimatedDbm === null
-            ? null
-            : `${logger.lastProcessed.estimatedDbm} dBm`
-        }
-      />
+      {!nativeAndroid && (
+        <InfoRow
+          label="RSSI (estimated)"
+          value={
+            logger.lastProcessed.estimatedDbm === null
+              ? null
+              : `${logger.lastProcessed.estimatedDbm} dBm`
+          }
+        />
+      )}
     </Section>
   );
 }
@@ -192,11 +200,16 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
           <InfoRow
             label="Signal"
             value={
-              latest.signalStrengthEstimatedDbm !== null && latest.signalStrengthEstimatedDbm !== undefined
-                ? `${latest.signalStrengthEstimatedDbm} dBm (Est)`
-                : latest.signalStrength === null
-                ? null
-                : `${latest.signalStrength} dBm`
+              latest.platform === "android"
+                ? latest.signalStrength === null
+                  ? null
+                  : `${latest.signalStrength} dBm`
+                : latest.signalStrengthEstimatedDbm !== null &&
+                    latest.signalStrengthEstimatedDbm !== undefined
+                  ? `${latest.signalStrengthEstimatedDbm} dBm (Est)`
+                  : latest.signalStrength === null
+                    ? null
+                    : `${latest.signalStrength} dBm`
             }
           />
         </>
@@ -212,7 +225,9 @@ function CapabilitiesSection() {
     <Section title="PLATFORM & SIGNAL ENGINE CAPABILITIES">
       <Text style={styles.capTitle}>Android (Foreground Service)</Text>
       <Text style={styles.cap}>
-        Native RSSI, BSSID & Frequency continuous sampling via Foreground Service with sticky notification.
+        Raw RSSI from WifiInfo.getRssi() (dBm) in the foreground and from the
+        location foreground service in the background. The Kalman estimation
+        engine is not used on Android.
       </Text>
       <Text style={styles.capTitle}>iOS (Background Location + Signal Estimation Engine)</Text>
       <Text style={styles.cap}>

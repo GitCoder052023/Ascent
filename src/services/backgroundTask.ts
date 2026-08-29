@@ -2,8 +2,7 @@ import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getConnectedWifi, normalizeRssiToScore } from "../lib/wifi";
-import { globalSignalEngine } from "../lib/signalEngine";
+import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
 import { saveMeasurementBuffered, flushWriteBuffer, Floor } from "../lib/db";
 import { createMeasurement } from "../lib/dataset";
 
@@ -72,12 +71,7 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
     const storedFloor = (await AsyncStorage.getItem(KEY_ACTIVE_FLOOR)) as Floor | null;
     const currentFloor = storedFloor === "FLOOR_1" || storedFloor === "FLOOR_2" ? storedFloor : activeFloor;
 
-    const rawScore = normalizeRssiToScore(wifi.signalStrength);
-    const processed = globalSignalEngine.processSignal(
-      rawScore,
-      wifi.frequency,
-      isMoving
-    );
+    const processed = processWifiSignal(wifi, isMoving);
 
     const item = createMeasurement(currentFloor, wifi, processed);
     await saveMeasurementBuffered(item);

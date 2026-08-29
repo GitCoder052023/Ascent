@@ -1,6 +1,12 @@
 import NetInfo, { NetInfoStateType } from "@react-native-community/netinfo";
 import { Platform } from "react-native";
 import WifiManager from "react-native-wifi-reborn";
+import {
+  globalSignalEngine,
+  isValidAndroidRssiDbm,
+  nativeAndroidSignal,
+  type ProcessedSignal,
+} from "./signalEngine";
 
 export type WifiSnapshot = {
   connectionState: "CONNECTED" | "DISCONNECTED" | "UNKNOWN";
@@ -61,10 +67,12 @@ async function getConnectedWifiUnlocked(): Promise<WifiSnapshot> {
     };
   }
   const details = state.details;
-  let signalStrength = details?.strength ?? null;
+  // NetInfo `strength` is 0–100 on Android (calculateSignalLevel), not dBm. Never use it as RSSI.
+  let signalStrength: number | null =
+    Platform.OS === "android" ? null : (details?.strength ?? null);
   let frequency = details?.frequency ?? null;
   let bssid = normalise(details?.bssid);
-  // These calls inspect only the active Android connection; they never scan nearby access points.
+  // Connected-network APIs only (WifiInfo.getRssi / getBSSID / getFrequency). No AP scan.
   if (Platform.OS === "android") {
     try {
       const getSafeBssid = async (): Promise<string | null> => {
@@ -79,7 +87,7 @@ async function getConnectedWifiUnlocked(): Promise<WifiSnapshot> {
       const getSafeRssi = async (): Promise<number | null> => {
         try {
           const val = await WifiManager.getCurrentSignalStrength();
-          return typeof val === "number" && !isNaN(val) ? val : null;
+          return isValidAndroidRssiDbm(val) ? val : null;
         } catch {
           return null;
         }
@@ -113,14 +121,35 @@ async function getConnectedWifiUnlocked(): Promise<WifiSnapshot> {
       console.warn("WifiManager query bypassed or failed in background context:", e);
     }
   }
+
+  const hasDbm =
+    Platform.OS === "android"
+      ? isValidAndroidRssiDbm(signalStrength)
+      : signalStrength !== null;
+
   return {
     connectionState: "CONNECTED",
     ssid: normalise(details?.ssid),
     bssid,
     signalStrength,
-    signalStrengthUnit: signalStrength === null ? null : "dBm",
+    signalStrengthUnit: hasDbm ? "dBm" : null,
     frequency,
   };
+}
+
+/** Android: pass through WifiInfo dBm. iOS: Kalman + band calibration. */
+export function processWifiSignal(
+  wifi: WifiSnapshot,
+  isMoving: boolean
+): ProcessedSignal {
+  if (Platform.OS === "android") {
+    return nativeAndroidSignal(wifi.signalStrength, wifi.frequency);
+  }
+  return globalSignalEngine.processSignal(
+    normalizeRssiToScore(wifi.signalStrength),
+    wifi.frequency,
+    isMoving
+  );
 }
 
 

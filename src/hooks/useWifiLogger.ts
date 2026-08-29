@@ -15,9 +15,8 @@ import {
   type Floor,
   type Measurement,
 } from "../lib/dataset";
-import { getConnectedWifi, normalizeRssiToScore, type WifiSnapshot } from "../lib/wifi";
+import { getConnectedWifi, processWifiSignal, type WifiSnapshot } from "../lib/wifi";
 import { EMPTY_WIFI } from "../constants/app";
-import { globalSignalEngine } from "../lib/signalEngine";
 import { useMotionDetector } from "./useMotionDetector";
 import {
   startBackgroundLoggingAsync,
@@ -44,10 +43,12 @@ export function useWifiLogger() {
     normalizedScore: number | null;
     estimatedDbm: number | null;
     frequencyBand: string;
+    source: "android-native" | "ios-estimated";
   }>({
     normalizedScore: null,
     estimatedDbm: null,
     frequencyBand: "UNKNOWN",
+    source: Platform.OS === "android" ? "android-native" : "ios-estimated",
   });
 
   const { isMoving, motionState, sampleIntervalMs } = useMotionDetector();
@@ -136,12 +137,7 @@ export function useWifiLogger() {
       const current = await getConnectedWifi();
       setWifi(current);
 
-      const rawScore = normalizeRssiToScore(current.signalStrength);
-      const processed = globalSignalEngine.processSignal(
-        rawScore,
-        current.frequency,
-        isMoving
-      );
+      const processed = processWifiSignal(current, isMoving);
       setLastProcessed(processed);
     } catch {
       setWifi(EMPTY_WIFI);
@@ -189,12 +185,7 @@ export function useWifiLogger() {
         return;
       }
 
-      const rawScore = normalizeRssiToScore(current.signalStrength);
-      const processed = globalSignalEngine.processSignal(
-        rawScore,
-        current.frequency,
-        isMoving
-      );
+      const processed = processWifiSignal(current, isMoving);
       setLastProcessed(processed);
 
       const item = createMeasurement(floor, current, processed);

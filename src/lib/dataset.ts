@@ -1,6 +1,7 @@
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import type { WifiSnapshot } from "./wifi";
+import type { ProcessedSignal } from "./signalEngine";
 import {
   clearAllMeasurementsFromDb,
   exportDatasetFromDb,
@@ -30,11 +31,7 @@ export const clearMeasurements = async (): Promise<void> => {
 export function createMeasurement(
   floor: Floor,
   wifi: WifiSnapshot,
-  processedSignal?: {
-    normalizedScore: number | null;
-    estimatedDbm: number | null;
-    frequencyBand: string;
-  }
+  processedSignal?: ProcessedSignal
 ): Measurement {
   return {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
