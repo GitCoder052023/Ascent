@@ -16,10 +16,6 @@ export default function Index() {
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>GYM EXPERIMENT</Text>
         <Text style={styles.title}>Wi‑Fi Floor{"\n"}Data Logger</Text>
-        <Text style={styles.sub}>
-          Background-efficient Wi‑Fi logger. Android uses native RSSI in dBm; iOS
-          estimates dBm from quantized scores.
-        </Text>
       </View>
 
       <View style={styles.status}>
@@ -113,7 +109,7 @@ export default function Index() {
             MOTION STATE
           </Text>
           <Text style={{ fontSize: 14, fontWeight: "700", color: "#1C1C1E", marginTop: 2 }}>
-            {logger.isMoving ? "🚶 WALKING" : "🧘 STATIONARY"}
+            {logger.isMoving ? "WALKING" : "STATIONARY"}
           </Text>
         </View>
         <View style={[styles.floor, { flex: 1, paddingVertical: 10 }]}>
@@ -142,7 +138,6 @@ export default function Index() {
 
       <ConnectionSection logger={logger} />
       <LatestMeasurement latest={latest} />
-      <CapabilitiesSection />
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
@@ -160,7 +155,7 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
       <InfoRow label="SSID" value={logger.wifi.ssid} />
       <InfoRow label="BSSID" value={logger.wifi.bssid} />
       <InfoRow
-        label={nativeAndroid ? "RSSI (WifiInfo.getRssi)" : "Raw RSSI (Native)"}
+        label={nativeAndroid ? "RSSI" : "RSSI"}
         value={logger.wifi.signalStrength === null ? null : `${logger.wifi.signalStrength} dBm`}
       />
       <InfoRow
@@ -172,7 +167,7 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
         }
       />
       <InfoRow
-        label={nativeAndroid ? "Normalized (from native dBm)" : "Normalized Score (Kalman)"}
+        label={nativeAndroid ? "Normalized" : "Normalized"}
         value={logger.lastProcessed.normalizedScore}
       />
       {!nativeAndroid && (
@@ -216,23 +211,6 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
       ) : (
         <Text style={styles.empty}>No measurements yet.</Text>
       )}
-    </Section>
-  );
-}
-
-function CapabilitiesSection() {
-  return (
-    <Section title="PLATFORM & SIGNAL ENGINE CAPABILITIES">
-      <Text style={styles.capTitle}>Android (Foreground Service)</Text>
-      <Text style={styles.cap}>
-        Raw RSSI from WifiInfo.getRssi() (dBm) in the foreground and from the
-        location foreground service in the background. The Kalman estimation
-        engine is not used on Android.
-      </Text>
-      <Text style={styles.capTitle}>iOS (Background Location + Signal Estimation Engine)</Text>
-      <Text style={styles.cap}>
-        SSID & BSSID captured via Location triggers. Signal estimation converts normalized scores back to dBm using frequency-aware dynamic bounds and Kalman filtering.
-      </Text>
     </Section>
   );
 }
