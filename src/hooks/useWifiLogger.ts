@@ -39,6 +39,7 @@ export function useWifiLogger() {
   const [paused, setPaused] = useState(false);
   const [network, setNetwork] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [appActive, setAppActive] = useState(AppState.currentState === "active");
   const [lastProcessed, setLastProcessed] = useState<{
     normalizedScore: number | null;
     estimatedDbm: number | null;
@@ -66,7 +67,9 @@ export function useWifiLogger() {
     void syncBackgroundStatus();
 
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") {
+      const active = state === "active";
+      setAppActive(active);
+      if (active) {
         void refresh();
         void loadMeasurements().then(setItems);
         void syncBackgroundStatus();
@@ -114,7 +117,7 @@ export function useWifiLogger() {
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (!recording || paused) {
+    if (!recording || paused || !appActive) {
       return;
     }
 
@@ -125,7 +128,7 @@ export function useWifiLogger() {
         clearInterval(interval.current);
       }
     };
-  }, [recording, paused, floor, network, sampleIntervalMs, isMoving]);
+  }, [recording, paused, floor, network, sampleIntervalMs, appActive]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   async function refresh() {
@@ -147,18 +150,16 @@ export function useWifiLogger() {
 
   async function requestPermission() {
     if (Platform.OS === "android") {
-      const result = await PermissionsAndroid.request(
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        {
-          title: "Wi-Fi connection access",
-          message:
-            "Android requires location access to read connected Wi-Fi details in foreground and background.",
-          buttonPositive: "Allow",
-          buttonNegative: "Not now",
+      const permissions = [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+      if (typeof Platform.Version === "number" && Platform.Version >= 33) {
+        const postNotifications = PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS;
+        if (postNotifications) {
+          permissions.push(postNotifications);
         }
-      );
+      }
 
-      if (result !== PermissionsAndroid.RESULTS.GRANTED) {
+      const result = await PermissionsAndroid.requestMultiple(permissions);
+      if (result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] !== PermissionsAndroid.RESULTS.GRANTED) {
         setNotice(
           "Wi-Fi details need Location permission. Enable it in Settings before recording."
         );
@@ -227,27 +228,26 @@ export function useWifiLogger() {
     }
 
     const now = Date.now();
+    await AsyncStorage.setItem(KEY_STARTED, String(now));
+    await AsyncStorage.setItem(KEY_NETWORK, current.ssid);
+
+    let backgroundNotice: string | null = null;
+    try {
+      const bgOk = await startBackgroundLoggingAsync(floor);
+      if (!bgOk) {
+        backgroundNotice =
+          "Background logging could not start. Recording will continue while this screen stays open.";
+      }
+    } catch (e) {
+      console.warn("Could not start background task:", e);
+    }
+
     setNetwork(current.ssid);
     setStarted(now);
     setSeconds(0);
     setPaused(false);
     setRecording(true);
-    setNotice(null);
-
-    await AsyncStorage.setItem(KEY_STARTED, String(now));
-    await AsyncStorage.setItem(KEY_NETWORK, current.ssid);
-
-    // Register background service
-    try {
-      const bgOk = await startBackgroundLoggingAsync(floor);
-      if (!bgOk) {
-        setNotice(
-          "Background location permission ('Allow all the time') is required to log Wi-Fi in the background."
-        );
-      }
-    } catch (e) {
-      console.warn("Could not start background task:", e);
-    }
+    setNotice(backgroundNotice);
 
     await sample();
   }

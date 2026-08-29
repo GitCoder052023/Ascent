@@ -15,6 +15,7 @@ export function useMotionDetector() {
   const windowRef = useRef<number[]>([]);
   const gravityRef = useRef<number>(1.0);
   const lastMotionTimeRef = useRef<number>(0);
+  const lastPersistRef = useRef<number>(0);
 
   useEffect(() => {
     Accelerometer.setUpdateInterval(SENSOR_INTERVAL_MS);
@@ -50,12 +51,14 @@ export function useMotionDetector() {
 
         if (stepDetected) {
           lastMotionTimeRef.current = now;
-          void AsyncStorage.setItem(KEY_LAST_MOTION, String(now)).catch(() => {});
+          if (now - lastPersistRef.current > 1000) {
+            lastPersistRef.current = now;
+            void AsyncStorage.setItem(KEY_LAST_MOTION, String(now)).catch(() => {});
+          }
         }
 
-        // Active if motion was detected within the last 6 seconds
         const active = now - lastMotionTimeRef.current < MOTION_HANGOVER_MS;
-        setIsMoving(active);
+        setIsMoving((prev) => (prev === active ? prev : active));
       }
     });
 

@@ -1,5 +1,6 @@
 import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
+import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getConnectedWifi, normalizeRssiToScore } from "../lib/wifi";
 import { globalSignalEngine } from "../lib/signalEngine";
@@ -11,7 +12,11 @@ import { KEY_LAST_MOTION } from "../hooks/useMotionDetector";
 export const WIFI_LOGGER_BACKGROUND_TASK = "wifi-logger-background-task";
 export const KEY_ACTIVE_FLOOR = "@wifi_logger_active_floor";
 
+const MIN_BACKGROUND_SAMPLE_MS = 3000;
+
 let activeFloor: Floor = "FLOOR_1";
+let lastBackgroundSampleAt = 0;
+let sampleInFlight = false;
 
 export function setBackgroundFloor(floor: Floor) {
   activeFloor = floor;
@@ -24,6 +29,14 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
     return;
   }
 
+  const now = Date.now();
+  if (sampleInFlight || now - lastBackgroundSampleAt < MIN_BACKGROUND_SAMPLE_MS) {
+    return;
+  }
+
+  sampleInFlight = true;
+  lastBackgroundSampleAt = now;
+
   try {
     const wifi = await getConnectedWifi();
     if (wifi.connectionState !== "CONNECTED" || !wifi.ssid) {
@@ -31,9 +44,7 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
     }
 
     let isMoving = false;
-    const now = Date.now();
 
-    // 1. Evaluate movement/speed from background location updates
     if (data && typeof data === "object" && "locations" in data && Array.isArray((data as any).locations)) {
       const locations = (data as any).locations as Location.LocationObject[];
       for (const loc of locations) {
@@ -44,7 +55,6 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
       }
     }
 
-    // 2. Evaluate recent accelerometer motion timestamp
     if (!isMoving) {
       try {
         const storedLastMotion = await AsyncStorage.getItem(KEY_LAST_MOTION);
@@ -71,9 +81,10 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
 
     const item = createMeasurement(currentFloor, wifi, processed);
     await saveMeasurementBuffered(item);
-    await flushWriteBuffer();
   } catch (err) {
     console.error("Failed background sample tick:", err);
+  } finally {
+    sampleInFlight = false;
   }
 });
 
@@ -89,29 +100,41 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
       return false;
     }
 
-    let bgStatus = (await Location.getBackgroundPermissionsAsync()).status;
-    if (bgStatus !== "granted") {
-      bgStatus = (await Location.requestBackgroundPermissionsAsync()).status;
-    }
-    if (bgStatus !== "granted") {
-      // Background location permission is required for continuous background tracking on both iOS & Android
-      return false;
+    if (Platform.OS !== "android") {
+      let bgStatus = (await Location.getBackgroundPermissionsAsync()).status;
+      if (bgStatus !== "granted") {
+        bgStatus = (await Location.requestBackgroundPermissionsAsync()).status;
+      }
+      if (bgStatus !== "granted") {
+        return false;
+      }
     }
 
-    const isAlreadyRegistered =
-      await TaskManager.isTaskRegisteredAsync(WIFI_LOGGER_BACKGROUND_TASK);
-    if (!isAlreadyRegistered) {
-      await Location.startLocationUpdatesAsync(WIFI_LOGGER_BACKGROUND_TASK, {
-        accuracy: Location.Accuracy.High,
-        distanceInterval: 1, // 1 meter movement trigger
-        timeInterval: 3000,  // Every 3 seconds in background
-        showsBackgroundLocationIndicator: true,
-        foregroundService: {
-          notificationTitle: "Wi-Fi Logger Active",
-          notificationBody: "Sampling connected Wi-Fi & motion metrics in background...",
-          notificationColor: "#208AEF",
-        },
-      });
+    // GPS here is only a keep-alive / wakeup for the foreground service.
+    // High accuracy + 1 m updates caused Android to schedule a JobScheduler
+    // task on every indoor GPS jump while the Activity was visible.
+    await Location.startLocationUpdatesAsync(WIFI_LOGGER_BACKGROUND_TASK, {
+      accuracy: Location.Accuracy.Balanced,
+      distanceInterval: Platform.OS === "android" ? 25 : 10,
+      timeInterval: 15000,
+      deferredUpdatesInterval: 15000,
+      deferredUpdatesDistance: 25,
+      pausesUpdatesAutomatically: false,
+      showsBackgroundLocationIndicator: true,
+      activityType: Location.ActivityType.Fitness,
+      mayShowUserSettingsDialog: false,
+      foregroundService: {
+        notificationTitle: "Wi-Fi Logger Active",
+        notificationBody: "Sampling connected Wi-Fi in the background",
+        killServiceOnDestroy: false,
+      },
+    });
+
+    if (Platform.OS === "android") {
+      const bg = await Location.getBackgroundPermissionsAsync();
+      if (bg.status !== "granted") {
+        await Location.requestBackgroundPermissionsAsync().catch(() => {});
+      }
     }
 
     return true;
@@ -123,6 +146,7 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
 
 export async function stopBackgroundLoggingAsync(): Promise<void> {
   try {
+    await flushWriteBuffer();
     const isRegistered =
       await TaskManager.isTaskRegisteredAsync(WIFI_LOGGER_BACKGROUND_TASK);
     if (isRegistered) {
@@ -141,4 +165,3 @@ export async function isBackgroundLoggingActiveAsync(): Promise<boolean> {
     return false;
   }
 }
-

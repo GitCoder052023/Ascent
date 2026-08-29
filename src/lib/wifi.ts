@@ -37,7 +37,18 @@ export function normalizeRssiToScore(
   }
 }
 
+let wifiQueryChain: Promise<unknown> = Promise.resolve();
+
 export async function getConnectedWifi(): Promise<WifiSnapshot> {
+  const run = wifiQueryChain.then(() => getConnectedWifiUnlocked(), () => getConnectedWifiUnlocked());
+  wifiQueryChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+async function getConnectedWifiUnlocked(): Promise<WifiSnapshot> {
   const state = await NetInfo.fetch();
   if (state.type !== NetInfoStateType.wifi || !state.isConnected) {
     return {

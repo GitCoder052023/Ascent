@@ -1,6 +1,6 @@
 {
   "name": "wifilogger",
-  "main": "expo-router/entry",
+  "main": "index.js",
   "version": "1.0.0",
   "dependencies": {
     "@expo/ui": "~57.0.14",
