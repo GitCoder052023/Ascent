@@ -56,18 +56,46 @@ export async function getConnectedWifi(): Promise<WifiSnapshot> {
   // These calls inspect only the active Android connection; they never scan nearby access points.
   if (Platform.OS === "android") {
     try {
+      const getSafeBssid = async (): Promise<string | null> => {
+        try {
+          const val = await WifiManager.getBSSID();
+          return typeof val === "string" && val ? val : null;
+        } catch {
+          return null;
+        }
+      };
+
+      const getSafeRssi = async (): Promise<number | null> => {
+        try {
+          const val = await WifiManager.getCurrentSignalStrength();
+          return typeof val === "number" && !isNaN(val) ? val : null;
+        } catch {
+          return null;
+        }
+      };
+
+      const getSafeFreq = async (): Promise<number | null> => {
+        try {
+          const val = await WifiManager.getFrequency();
+          return typeof val === "number" && !isNaN(val) ? val : null;
+        } catch {
+          return null;
+        }
+      };
+
       const [nativeBssid, nativeRssi, nativeFrequency] = await Promise.allSettled([
-        WifiManager.getBSSID(),
-        WifiManager.getCurrentSignalStrength(),
-        WifiManager.getFrequency(),
+        getSafeBssid(),
+        getSafeRssi(),
+        getSafeFreq(),
       ]);
+
       if (nativeBssid.status === "fulfilled" && nativeBssid.value) {
         bssid = normalise(nativeBssid.value) ?? bssid;
       }
-      if (nativeRssi.status === "fulfilled" && nativeRssi.value !== null && nativeRssi.value !== undefined) {
+      if (nativeRssi.status === "fulfilled" && nativeRssi.value !== null) {
         signalStrength = nativeRssi.value;
       }
-      if (nativeFrequency.status === "fulfilled" && nativeFrequency.value !== null && nativeFrequency.value !== undefined) {
+      if (nativeFrequency.status === "fulfilled" && nativeFrequency.value !== null) {
         frequency = nativeFrequency.value;
       }
     } catch (e) {

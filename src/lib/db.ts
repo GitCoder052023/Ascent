@@ -29,6 +29,7 @@ const DB_NAME = "wifilogger_v2.db";
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let writeBuffer: Measurement[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
+let activeFlushPromise: Promise<void> | null = null;
 
 async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
@@ -116,18 +117,34 @@ export async function flushWriteBuffer(): Promise<void> {
     flushTimer = null;
   }
 
+  if (activeFlushPromise) {
+    try {
+      await activeFlushPromise;
+    } catch {
+      // Ignore previous flush error, proceed to try flushing current buffer
+    }
+  }
+
   if (writeBuffer.length === 0) return;
 
-  const itemsToFlush = [...writeBuffer];
-  writeBuffer = [];
+  activeFlushPromise = (async () => {
+    const itemsToFlush = [...writeBuffer];
+    writeBuffer = [];
+
+    try {
+      const db = await getDatabase();
+      await insertBatch(db, itemsToFlush);
+    } catch (error) {
+      // Put items back into writeBuffer if insert failed
+      writeBuffer = [...itemsToFlush, ...writeBuffer];
+      console.error("Failed to flush measurements buffer to SQLite:", error);
+    }
+  })();
 
   try {
-    const db = await getDatabase();
-    await insertBatch(db, itemsToFlush);
-  } catch (error) {
-    // Put items back into writeBuffer if insert failed
-    writeBuffer = [...itemsToFlush, ...writeBuffer];
-    console.error("Failed to flush measurements buffer to SQLite:", error);
+    await activeFlushPromise;
+  } finally {
+    activeFlushPromise = null;
   }
 }
 
