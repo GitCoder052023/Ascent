@@ -75,7 +75,7 @@ export class SignalEstimationEngine {
     // Clamp smoothed normalized score between 0 and 1
     const smoothedScore = Math.max(0, Math.min(1, this.xEst));
 
-    // Dynamic Model B Formula: Piecewise band-aware calculation
+    // Piecewise band-aware calculation
     const span = bounds.maxDbm - bounds.minDbm;
     const estimatedDbm = Math.round((bounds.minDbm + smoothedScore * span) * 10) / 10;
 

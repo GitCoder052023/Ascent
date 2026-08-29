@@ -1,124 +1,206 @@
-# Wi-Fi Floor Data Logger
+# 📶 WifiLogger
 
-A high-performance, background-efficient, cross-platform Wi-Fi data-collection and feasibility-testing tool built on Expo SDK 57 and React Native 0.86.
+> **⚠️ Important Context:** WifiLogger was originally built as an **internal testing tool** while developing a product for a client. It was never intended to be a polished, general-purpose application. We're open-sourcing it as-is because we believe the underlying techniques — background Wi-Fi sampling, Kalman-filtered signal estimation, motion-adaptive polling — are genuinely useful and hard to find good references for. Take what's useful, ignore what's rough.
 
-The app collects labeled measurements from the Wi-Fi network the phone is **already connected to** while screen-off in the pocket or running in the background. It does **not** scan for nearby Wi-Fi networks.
+A React Native (Expo) app that continuously logs Wi-Fi signal data across physical floors/zones — in the foreground **and** background — and exports structured datasets for analysis.
 
----
-
-## Architecture & Core Features
-
-### 1. Screen-Off Background Efficiency
-* **Android Foreground Service**: Runs a continuous low-priority foreground service with sticky notification to sample Wi-Fi metrics with the screen locked or app backgrounded.
-* **iOS Background Location Tasks**: Leverages `expo-task-manager` and `expo-location` background updates (`UIBackgroundModes: ["location"]`) to keep sampling active as users move across floors.
-* **Zero Display Overhead**: Removed mandatory `KeepAwake` requirements, reducing battery consumption by **~75–85%** during survey sessions.
-
-### 2. Real-Time Dynamic Signal Engine (Model B)
-To overcome iOS's public API restriction (which hides raw RSSI in dBm and returns a normalized float $0.0 - 1.0$), the logger integrates an advanced signal processing pipeline:
-* **Frequency-Aware Band Calibration**: Dynamically adjusts bounds ($\text{RSSI}_{\text{min}}, \text{RSSI}_{\text{max}}$) based on link frequency ($2.4\text{ GHz}$, $5\text{ GHz}$, and $6\text{ GHz}$).
-* **1D Adaptive Kalman Filter**: Smooths raw signal input, eliminating iOS step quantization jumps and multipath RF reflections.
-* **Sub-Step Dithering**: Interpolates smooth continuous dBm estimates between step updates.
-
-### 3. Motion-Assisted Adaptive Sampling
-* Uses `expo-sensors` accelerometer variance to detect device physical movement.
-* **Walking State** (moving across rooms/floors): Switches to **$3\text{s}$ sampling rate** and sets Kalman process noise $Q = 0.30$ for instant tracking.
-* **Stationary State** (phone resting on desk): Switches to **$30\text{s}$ sampling rate** and sets $Q = 0.01$ for maximum battery conservation.
-
-### 4. High-Performance SQLite Persistence (`expo-sqlite`)
-* Replaces whole-dataset `AsyncStorage` JSON re-serialization with **SQLite (WAL mode)**.
-* Implements in-memory write buffering (flushing every 10 samples or 5s inside single transactions).
-* Supports streaming CSV/JSON export direct from SQLite.
+Built with Expo SDK 57 · React Native 0.86 · TypeScript
 
 ---
 
-## Platform Capabilities Matrix
+## What It Does
 
-| Field | Android | iOS |
-| :--- | :--- | :--- |
-| **Connection State** | Yes | Yes |
-| **Connected SSID** | Yes (`ACCESS_FINE_LOCATION`) | Yes (`Location` permission) |
-| **Connected BSSID** | Yes (`ACCESS_FINE_LOCATION`) | Yes (`Location` permission) |
-| **Native RSSI (dBm)** | Yes | Not exposed by public API |
-| **Estimated RSSI (Model B)** | Computed | Computed via Dynamic Engine |
-| **Normalized Score ($s$)** | Computed | Yes ($0.0 - 1.0$) |
-| **Frequency & Band** | Yes (MHz + 2.4/5/6 GHz) | Derived / Reported where available |
-| **Background Execution** | Foreground Service | Background Location Updates |
+WifiLogger connects to your current Wi-Fi network and records signal measurements at adaptive intervals. It was designed for walking around a multi-floor space (originally a gym) and collecting labeled signal-strength data per zone.
+
+**Core capabilities:**
+
+- **Background-efficient logging** — continues recording when the app is backgrounded or the screen is locked, using platform-native mechanisms (Android Foreground Service, iOS Background Location)
+- **Kalman-filtered signal estimation** — a 1D Kalman Filter smooths noisy RSSI readings and a Signal Estimation Engine converts normalized scores back to estimated dBm values
+- **Motion-adaptive sampling** — uses accelerometer data to detect walking vs. stationary states, sampling every **3 seconds** while moving and every **30 seconds** when still
+- **Floor/zone labeling** — tag measurements with a floor label (FLOOR_1 / FLOOR_2) to build per-zone datasets
+- **Dataset export** — export all collected measurements as **CSV** or **JSON** via the native share sheet
+- **SQLite persistence** — measurements are stored locally in SQLite with WAL journaling and buffered writes, surviving app restarts
 
 ---
 
 ## Tech Stack
 
-* **Expo SDK**: ~57.0.17
-* **React Native**: 0.86.3
-* **Database**: `expo-sqlite` (WAL Mode)
-* **Background Framework**: `expo-task-manager` & `expo-location`
-* **Sensors**: `expo-sensors` (Accelerometer)
-* **Language**: TypeScript
-
-*Note: Because native Wi-Fi, background location, and foreground service capabilities are required, **Expo Go is not supported**. Use EAS Build or a native Development Build.*
+| Layer | Tech |
+|---|---|
+| Framework | [Expo](https://expo.dev) SDK 57, React Native 0.86 |
+| Language | TypeScript 6.0 |
+| Navigation | Expo Router |
+| Wi-Fi APIs | `@react-native-community/netinfo`, `react-native-wifi-reborn` |
+| Background | `expo-task-manager`, `expo-location` (foreground service / background location) |
+| Storage | `expo-sqlite` (WAL mode, buffered writes) |
+| Sensors | `expo-sensors` (Accelerometer) |
+| Export | `expo-file-system`, `expo-sharing` |
 
 ---
 
-## Building the Application with EAS
+## Architecture Overview
 
-### 1. Install Dependencies
+```
+┌─────────────────────────────────────────────┐
+│                    UI Layer                  │
+│              src/app/index.tsx               │
+│    Floor selector · Metrics · Export actions │
+└──────────────────┬──────────────────────────┘
+                   │
+          ┌────────▼────────┐
+          │  useWifiLogger   │  Main orchestrator hook
+          │  useMotionDetect │  Accelerometer → walking/stationary
+          └────────┬────────┘
+                   │
+     ┌─────────────┼─────────────┐
+     ▼             ▼             ▼
+ lib/wifi.ts   lib/signal    lib/db.ts
+ NetInfo +     Engine.ts     SQLite WAL +
+ WifiManager   Kalman +      buffered writes
+               Band Model
+                   │
+                   ▼
+          services/backgroundTask.ts
+          expo-task-manager + expo-location
+          (foreground service / bg location)
+```
+
+### Signal Estimation Engine
+
+iOS doesn't expose raw RSSI values in background — you get a coarse normalized score. The `SignalEstimationEngine` class addresses this:
+
+1. **Normalize** raw RSSI to a 0–1 score (handles both dBm and percentage inputs)
+2. **Kalman Filter** smooths the score with motion-aware process noise (`Q=0.30` when walking, `Q=0.01` when stationary)
+3. **Band-Aware Calibration** maps the smoothed score back to dBm using per-band bounds:
+   - 2.4 GHz: −92 to −28 dBm
+   - 5 GHz: −88 to −32 dBm
+   - 6 GHz: −84 to −35 dBm
+
+### Motion Detection
+
+The `useMotionDetector` hook runs the accelerometer at 10 Hz, applies a high-pass filter to isolate linear acceleration from gravity, and uses a dual-threshold approach (instantaneous step peak > 0.045 G **or** sliding-window variance > 0.005) with a 6-second hangover to classify walking vs. stationary.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js ≥ 18
+- [Expo CLI](https://docs.expo.dev/get-started/installation/)
+- For device builds: [EAS CLI](https://docs.expo.dev/eas/) (`npm install -g eas-cli`)
+- A physical device (Wi-Fi APIs don't work on simulators/emulators)
+
+### Install & Run
 
 ```bash
+# Clone the repo
+git clone https://github.com/your-username/WifiLogger.git
+cd WifiLogger
+
+# Install dependencies
 npm install
+
+# Start the dev server
+npx expo start
 ```
 
-### 2. Build Android Preview APK
+### Building for Device
+
+This app requires a **development build** (not Expo Go) because it uses native modules (`react-native-wifi-reborn`, `expo-task-manager`, etc.).
 
 ```bash
-npx eas build --platform android --profile preview
-```
+# Development build (internal distribution)
+eas build --profile development --platform android
+eas build --profile development --platform ios
 
-### 3. Build iOS Development / Ad-Hoc Build
-
-```bash
-npx eas build --platform ios --profile preview
+# Preview APK (Android)
+eas build --profile preview --platform android
 ```
 
 ---
 
-## Data Collection Workflow
+## Permissions
 
-1. Connect the phone to the gym / target Wi-Fi network.
-2. Open **Wi-Fi Floor Data Logger** and grant Location / Background permissions.
-3. Select the ground-truth floor label (**Floor 1** or **Floor 2**).
-4. Tap **START RECORDING**.
-5. Lock the screen or put the phone in your pocket. The app will log measurements automatically.
-6. The motion detector will automatically adapt sampling rates ($3\text{s}$ when walking, $30\text{s}$ when stationary).
-7. Tap **STOP RECORDING** when finished and export your dataset as **CSV** or **JSON**.
+The app requests the following permissions — all necessary for Wi-Fi signal access and background logging:
+
+| Permission | Why |
+|---|---|
+| `ACCESS_FINE_LOCATION` | Required by Android to read Wi-Fi SSID and BSSID |
+| `ACCESS_BACKGROUND_LOCATION` | Background Wi-Fi sampling when app is not in foreground |
+| `FOREGROUND_SERVICE` | Android foreground service for continuous logging |
+| `POST_NOTIFICATIONS` | Android 13+ notification for the foreground service |
+| `WAKE_LOCK` | Prevent CPU sleep during background sampling |
+| iOS Location (Always) | Background location triggers used as a keep-alive for Wi-Fi reads |
 
 ---
 
-## Dataset Schema
+## Exported Data Schema
 
-Exported CSV and JSON files include the following fields:
+Each measurement (CSV/JSON) contains:
 
-```json
-{
-  "id": "1772142981-a3f2b1",
-  "timestamp": "2026-08-28T22:45:00.000Z",
-  "floor": "FLOOR_1",
-  "ssid": "GymWiFi",
-  "bssid": "AA:BB:CC:DD:EE:FF",
-  "signalStrength": -57,
-  "signalStrengthUnit": "dBm",
-  "frequency": 5180,
-  "connectionType": "wifi",
-  "platform": "ios",
-  "deviceModel": "iPhone 15 Pro",
-  "osVersion": "18.1",
-  "signalStrengthNormalized": 0.685,
-  "signalStrengthEstimatedDbm": -52.4,
-  "frequencyBand": "5GHz"
-}
+| Field | Type | Description |
+|---|---|---|
+| `id` | string | Unique measurement ID |
+| `timestamp` | ISO 8601 | When the measurement was taken |
+| `floor` | `FLOOR_1` \| `FLOOR_2` | User-selected zone label |
+| `ssid` | string | Connected Wi-Fi network name |
+| `bssid` | string | Access point MAC address |
+| `signalStrength` | number | Raw RSSI in dBm (native) |
+| `signalStrengthUnit` | `dBm` | Unit of raw signal |
+| `frequency` | number | Wi-Fi frequency in MHz |
+| `connectionType` | `wifi` | Always "wifi" |
+| `platform` | string | `ios` or `android` |
+| `deviceModel` | string | Device model name |
+| `osVersion` | string | OS version string |
+| `signalStrengthNormalized` | number | Kalman-smoothed normalized score (0–1) |
+| `signalStrengthEstimatedDbm` | number | Band-calibrated estimated dBm |
+| `frequencyBand` | string | `2.4GHz`, `5GHz`, `6GHz`, or `UNKNOWN` |
+
+---
+
+## Project Structure
+
 ```
+src/
+├── app/
+│   ├── _layout.tsx          # Root layout
+│   └── index.tsx            # Main screen UI
+├── components/
+│   ├── InfoRow.tsx           # Key-value display row
+│   ├── Metric.tsx            # Metric card
+│   └── Section.tsx           # Collapsible section wrapper
+├── constants/
+│   └── app.ts               # App-wide constants
+├── hooks/
+│   ├── useMotionDetector.ts  # Accelerometer-based motion detection
+│   └── useWifiLogger.ts      # Main logging orchestrator
+├── lib/
+│   ├── dataset.ts            # Measurement CRUD + export
+│   ├── db.ts                 # SQLite database layer
+│   ├── signalEngine.ts       # Kalman filter + band calibration
+│   └── wifi.ts               # Wi-Fi snapshot via NetInfo + WifiManager
+├── services/
+│   └── backgroundTask.ts     # Background logging task
+├── styles/
+│   └── appStyles.ts          # Stylesheet
+└── utils/
+    └── format.ts             # Formatting helpers
+```
+
+---
+
+## Known Limitations
+
+This was an internal tool — treat it accordingly:
+
+- **Hardcoded to two floors** — the floor labels (`FLOOR_1` / `FLOOR_2`) and their descriptions ("Strength area" / "Cardio area") are hardcoded for the specific gym we were testing in. You'll want to make these configurable for your use case.
+- **iOS signal estimation is approximate** — the Kalman + band-model approach produces reasonable estimates but they're not ground truth. Use them as relative indicators.
+- **No scan of nearby networks** — only the currently connected AP is logged. This intentionally avoids `WifiManager.loadWifiList()` to stay within background constraints.
+- **No remote sync** — all data stays on-device. Export manually via the share sheet.
 
 ---
 
 ## License
 
-See the repository's [LICENSE](file:///Users/hamdan/WifiLogger/LICENSE) file for terms of use.
+[MIT](LICENSE) — Copyright 2026 Hamdan Khubaib

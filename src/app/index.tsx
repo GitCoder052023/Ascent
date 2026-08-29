@@ -170,7 +170,7 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
         value={logger.lastProcessed.normalizedScore}
       />
       <InfoRow
-        label="Dynamic Model B RSSI"
+        label="RSSI"
         value={
           logger.lastProcessed.estimatedDbm === null
             ? null
@@ -214,7 +214,7 @@ function CapabilitiesSection() {
       <Text style={styles.cap}>
         Native RSSI, BSSID & Frequency continuous sampling via Foreground Service with sticky notification.
       </Text>
-      <Text style={styles.capTitle}>iOS (Background Location + Dynamic Model B Engine)</Text>
+      <Text style={styles.capTitle}>iOS (Background Location + Signal Estimation Engine)</Text>
       <Text style={styles.cap}>
         SSID & BSSID captured via Location triggers. Signal estimation converts normalized scores back to dBm using frequency-aware dynamic bounds and Kalman filtering.
       </Text>
