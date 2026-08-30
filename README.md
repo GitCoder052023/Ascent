@@ -10,16 +10,17 @@ Built with Expo SDK 57 · React Native 0.86 · TypeScript
 
 ## What It Does
 
-WifiLogger connects to your current Wi-Fi network and records signal measurements at adaptive intervals. It was designed for walking around a multi-floor space (originally a gym) and collecting labeled signal-strength data per zone.
+WifiLogger connects to your current Wi-Fi network and records signal measurements at adaptive intervals. It was designed for walking around a multi-floor space and collecting labeled signal-strength data per zone.
 
 **Core capabilities:**
 
+- **Cross-platform Wi‑Fi collection** — Android reads native RSSI in dBm from the connected AP; iOS does not expose a continuous raw dBm stream the same way, so the app uses a custom estimate pipeline instead
 - **Background-efficient logging** — continues recording when the app is backgrounded or the screen is locked, using platform-native mechanisms (Android Foreground Service, iOS Background Location)
-- **Kalman-filtered signal estimation** — a 1D Kalman Filter smooths noisy RSSI readings and a Signal Estimation Engine converts normalized scores back to estimated dBm values
 - **Motion-adaptive sampling** — uses accelerometer data to detect walking vs. stationary states, sampling every **3 seconds** while moving and every **30 seconds** when still
 - **Floor/zone labeling** — tag measurements with a floor label (FLOOR_1 / FLOOR_2) to build per-zone datasets
 - **Dataset export** — export all collected measurements as **CSV** or **JSON** via the native share sheet
 - **SQLite persistence** — measurements are stored locally in SQLite with WAL journaling and buffered writes, surviving app restarts
+- **iOS RSSI reconstruction** — a dedicated `SignalEstimationEngine` turns coarse iOS signal scores into usable estimated dBm values so the dataset remains comparable across platforms
 
 ---
 
@@ -65,16 +66,27 @@ WifiLogger connects to your current Wi-Fi network and records signal measurement
           (foreground service / bg location)
 ```
 
-### Signal Estimation Engine
+### Android vs. iOS RSSI Collection
 
-iOS doesn't expose raw RSSI values in background — you get a coarse normalized score. The `SignalEstimationEngine` class addresses this:
+The key behavior is different by platform, and that difference is why we needed a separate iOS-only estimation path.
 
-1. **Normalize** raw RSSI to a 0–1 score (handles both dBm and percentage inputs)
-2. **Kalman Filter** smooths the score with motion-aware process noise (`Q=0.30` when walking, `Q=0.01` when stationary)
-3. **Band-Aware Calibration** maps the smoothed score back to dBm using per-band bounds:
+| Platform | What the OS gives us | How we use it |
+|---|---|---|
+| Android | Native connected-AP RSSI in dBm via `WifiManager.getCurrentSignalStrength()` and Wi‑Fi frequency | Store it directly as `signalStrength` and treat it as the ground truth for that sample |
+| iOS | No continuous raw dBm stream from the connected AP in the way Android exposes it; background reads are coarse and normalized | Convert the available normalized score into an estimated dBm value using a custom reconstruction engine |
+
+On Android, the app can read a relatively steady stream of Wi‑Fi metrics directly from the native stack. That makes the data collection path straightforward: native dBm → smoothing/filtering if needed → exported dataset.
+
+On iOS, we do not get the same kind of continuous raw RSSI stream. In practice, the app receives a normalized / quantized signal score from the system rather than a true, ongoing dBm trace. That is not enough to produce a comparable floor-strength dataset without additional modeling. So we built a dedicated `SignalEstimationEngine` that:
+
+1. **Normalizes** the iOS signal score into a 0–1 value (handling both native dBm and percentage-style inputs when present)
+2. **Applies a 1D Kalman filter** to smooth the noisy score with motion-aware process noise (`Q=0.30` when walking, `Q=0.01` when stationary)
+3. **Maps the smoothed score back to dBm** using band-aware calibration for the actual Wi‑Fi band:
    - 2.4 GHz: −92 to −28 dBm
    - 5 GHz: −88 to −32 dBm
    - 6 GHz: −84 to −35 dBm
+
+This is not a perfect replacement for true native RSSI. It is a best-effort reconstruction that allows the app to produce a comparable signal series on iOS for the same floor-mapping task. In other words, the app uses the same target outcome across both platforms — a continuous, labeled signal-strength dataset — but the iOS path had to invent its own estimation layer because the platform itself does not natively supply the raw dBm stream Android does.
 
 ### Motion Detection
 
@@ -137,7 +149,7 @@ The app requests the following permissions — all necessary for Wi-Fi signal ac
 
 ## Exported Data Schema
 
-Each measurement (CSV/JSON) contains:
+Each measurement (CSV/JSON) contains a single record from either the native Android path or the iOS estimation pipeline. The exported schema keeps both the raw/native and reconstructed values so the dataset can be compared across platforms.
 
 | Field | Type | Description |
 |---|---|---|
@@ -146,15 +158,15 @@ Each measurement (CSV/JSON) contains:
 | `floor` | `FLOOR_1` \| `FLOOR_2` | User-selected zone label |
 | `ssid` | string | Connected Wi-Fi network name |
 | `bssid` | string | Access point MAC address |
-| `signalStrength` | number | Raw RSSI in dBm (native) |
-| `signalStrengthUnit` | `dBm` | Unit of raw signal |
+| `signalStrength` | number | Native RSSI in dBm on Android. On iOS this is the best available signal value before reconstruction, often a coarse normalized score converted to an approximation before storage. |
+| `signalStrengthUnit` | `dBm` | Unit used for the raw/native signal |
 | `frequency` | number | Wi-Fi frequency in MHz |
 | `connectionType` | `wifi` | Always "wifi" |
 | `platform` | string | `ios` or `android` |
 | `deviceModel` | string | Device model name |
 | `osVersion` | string | OS version string |
-| `signalStrengthNormalized` | number | Kalman-smoothed normalized score (0–1) |
-| `signalStrengthEstimatedDbm` | number | Band-calibrated estimated dBm |
+| `signalStrengthNormalized` | number | Kalman-smoothed normalized score (0–1), generated for both platforms to keep downstream processing consistent |
+| `signalStrengthEstimatedDbm` | number | Band-calibrated estimated dBm. Android often uses the native value directly; iOS uses the custom reconstruction engine |
 | `frequencyBand` | string | `2.4GHz`, `5GHz`, `6GHz`, or `UNKNOWN` |
 
 ---
