@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import {
   getLatestRaw,
   probeSensorAvailability,
-  requestMotionPermissions,
   subscribeLatestRaw,
   type LatestRaw,
 } from "../lib/imuCollector";

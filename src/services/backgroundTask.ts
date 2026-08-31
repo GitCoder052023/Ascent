@@ -1,6 +1,6 @@
 import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
-import { Platform } from "react-native";
+import { AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
 import { flushRawWriteBuffer, flushWriteBuffer, Floor } from "../lib/db";
@@ -17,10 +17,12 @@ export const WIFI_LOGGER_BACKGROUND_TASK = "wifi-logger-background-task";
 export { KEY_ACTIVE_FLOOR };
 
 const MIN_BACKGROUND_SAMPLE_MS = 3000;
+const SAMPLE_IN_FLIGHT_TIMEOUT_MS = 30000;
 
 let activeFloor: Floor = "FLOOR_1";
 let lastBackgroundSampleAt = 0;
 let sampleInFlight = false;
+let sampleInFlightStartedAt = 0;
 
 export function setBackgroundFloor(floor: Floor) {
   activeFloor = floor;
@@ -34,16 +36,24 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
   }
 
   const now = Date.now();
+  if (sampleInFlight && now - sampleInFlightStartedAt > SAMPLE_IN_FLIGHT_TIMEOUT_MS) {
+    sampleInFlight = false;
+  }
+
   if (sampleInFlight || now - lastBackgroundSampleAt < MIN_BACKGROUND_SAMPLE_MS) {
     return;
   }
 
   sampleInFlight = true;
+  sampleInFlightStartedAt = now;
   lastBackgroundSampleAt = now;
 
   try {
     const labels = await hydrateLabelsFromStorage();
-    await ensureImuCollectorAlive().catch(() => {});
+    // Only attempt IMU collector revival if the UI/Activity is currently active
+    if (AppState.currentState === "active") {
+      await ensureImuCollectorAlive().catch(() => {});
+    }
 
     const wifi = await getConnectedWifi();
     if (wifi.connectionState !== "CONNECTED" || !wifi.ssid) {
@@ -143,13 +153,6 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
           killServiceOnDestroy: false,
         },
       });
-    }
-
-    if (Platform.OS === "android") {
-      const bg = await Location.getBackgroundPermissionsAsync();
-      if (bg.status !== "granted") {
-        await Location.requestBackgroundPermissionsAsync().catch(() => {});
-      }
     }
 
     return true;

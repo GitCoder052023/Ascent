@@ -49,7 +49,6 @@ import {
   useRawSensorCollector,
 } from "./useRawSensorCollector";
 import {
-  ensureImuCollectorAlive,
   isImuCollectorRunning,
   startImuCollector,
   stopImuCollector,
@@ -57,6 +56,7 @@ import {
 
 const KEY_STARTED = "@wifi_logger_started";
 const KEY_NETWORK = "@wifi_logger_network";
+const KEY_RECOVERY_TIMESTAMPS = "@wifi_logger_recovery_timestamps";
 
 const DEVICE_META = {
   platform: Platform.OS,
@@ -65,6 +65,7 @@ const DEVICE_META = {
 };
 
 export function useWifiLogger() {
+  const [hydrated, setHydrated] = useState(false);
   const [floor, setFloorState] = useState<Floor>("FLOOR_1");
   const [activity, setActivityState] = useState<ActivityLabel | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -91,8 +92,8 @@ export function useWifiLogger() {
   });
 
   const { isMoving, motionState, sampleIntervalMs } = useMotionDetector({
-    enabled: appActive && !recording,
-    ownUpdateInterval: !recording,
+    enabled: appActive && !recording && hydrated,
+    ownUpdateInterval: !recording && hydrated,
   });
   const interval = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSampleKey = useRef<string | null>(null);
@@ -119,19 +120,26 @@ export function useWifiLogger() {
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    void hydrateLabelsFromStorage().then((labels) => {
+    async function init() {
+      const labels = await hydrateLabelsFromStorage();
       setFloorState(labels.floor);
       setActivityState(labels.activity);
       if (labels.sessionId) {
         setSessionId(labels.sessionId);
       }
-    });
-    void loadMeasurements()
-      .then(setItems)
-      .catch(() => setNotice("Could not load the saved dataset."));
-    void getRawObservationCount().then(setRawCount).catch(() => {});
-    void refresh();
-    void syncBackgroundStatus();
+      try {
+        const measurements = await loadMeasurements();
+        setItems(measurements);
+      } catch {
+        setNotice("Could not load the saved dataset.");
+      }
+      void getRawObservationCount().then(setRawCount).catch(() => {});
+      void refresh();
+      await syncBackgroundStatus();
+      setHydrated(true);
+    }
+
+    void init();
 
     const subscription = AppState.addEventListener("change", (state) => {
       const active = state === "active";
@@ -143,7 +151,6 @@ export function useWifiLogger() {
         void loadMeasurements().then(setItems);
         void getRawObservationCount().then(setRawCount);
         void syncBackgroundStatus();
-        void ensureImuCollectorAlive();
       }
     });
 
@@ -158,10 +165,49 @@ export function useWifiLogger() {
     return () => clearInterval(clock);
   }, [recording]);
 
+  // Clear crash recovery tracking once recording runs stably for 30s
+  useEffect(() => {
+    if (!recording) return;
+    const timer = setTimeout(() => {
+      void AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS).catch(() => {});
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [recording]);
+
   async function syncBackgroundStatus() {
     try {
       const active = await isBackgroundLoggingActiveAsync();
       if (active) {
+        // Crash loop detection: if app crashed & recovered 3+ times in 30s, abort to break loop
+        const now = Date.now();
+        let recoveries: number[] = [];
+        try {
+          const raw = await AsyncStorage.getItem(KEY_RECOVERY_TIMESTAMPS);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+              recoveries = parsed.filter((t: unknown) => typeof t === "number" && now - t < 30000);
+            }
+          }
+        } catch {
+          recoveries = [];
+        }
+        recoveries.push(now);
+        await AsyncStorage.setItem(KEY_RECOVERY_TIMESTAMPS, JSON.stringify(recoveries)).catch(() => {});
+
+        if (recoveries.length >= 3) {
+          console.warn("Crash loop detected: stopping background logging to recover safely");
+          await stopBackgroundLoggingAsync().catch(() => {});
+          await stopImuCollector().catch(() => {});
+          await AsyncStorage.removeItem(KEY_STARTED).catch(() => {});
+          await AsyncStorage.removeItem(KEY_NETWORK).catch(() => {});
+          await AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS).catch(() => {});
+          setRecording(false);
+          setCachedRecording(false);
+          setNotice("Recording was safely stopped due to repeated app closures. Your saved data is intact.");
+          return;
+        }
+
         setRecording(true);
         setCachedRecording(true);
         const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
@@ -176,7 +222,12 @@ export function useWifiLogger() {
           setNetwork(storedNetwork);
         }
         if (!isImuCollectorRunning()) {
-          void startImuCollector(DEVICE_META);
+          // Stabilization delay so Activity resume lifecycle settles before sensor listeners attach
+          setTimeout(() => {
+            if (!isImuCollectorRunning()) {
+              void startImuCollector(DEVICE_META);
+            }
+          }, 800);
         }
       }
     } catch {
@@ -318,6 +369,7 @@ export function useWifiLogger() {
     setRecording(true);
 
     await AsyncStorage.setItem(KEY_STARTED, String(now));
+    await AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS);
     if (current.connectionState === "CONNECTED" && current.ssid) {
       await AsyncStorage.setItem(KEY_NETWORK, current.ssid);
       setNetwork(current.ssid);
@@ -368,6 +420,7 @@ export function useWifiLogger() {
     await stopImuCollector();
     await AsyncStorage.removeItem(KEY_STARTED);
     await AsyncStorage.removeItem(KEY_NETWORK);
+    await AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS);
     try {
       await stopBackgroundLoggingAsync();
     } catch (e) {
