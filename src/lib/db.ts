@@ -274,6 +274,7 @@ export async function getAllMeasurements(): Promise<Measurement[]> {
 export async function clearAllMeasurementsFromDb(): Promise<void> {
   writeBuffer = [];
   rawWriteBuffer = [];
+  cachedRawDbCount = 0;
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
@@ -288,8 +289,9 @@ export async function clearAllMeasurementsFromDb(): Promise<void> {
   await db.runAsync("DELETE FROM recording_sessions");
 }
 
-const RAW_FLUSH_SIZE = 80;
-const RAW_FLUSH_MS = 750;
+const RAW_FLUSH_SIZE = 200;
+const RAW_FLUSH_MS = 2000;
+let cachedRawDbCount: number | null = null;
 
 type RawDbRow = {
   id: string;
@@ -425,6 +427,9 @@ export async function flushRawWriteBuffer(): Promise<void> {
     try {
       const db = await getDatabase();
       await insertRawBatch(db, itemsToFlush);
+      if (cachedRawDbCount !== null) {
+        cachedRawDbCount += itemsToFlush.length;
+      }
     } catch (error) {
       rawWriteBuffer = [...itemsToFlush, ...rawWriteBuffer];
       console.error("Failed to flush raw observations buffer to SQLite:", error);
@@ -459,12 +464,14 @@ export async function getAllRawObservations(): Promise<RawObservation[]> {
 }
 
 export async function getRawObservationCount(): Promise<number> {
-  await flushRawWriteBuffer();
-  const db = await getDatabase();
-  const row = await db.getFirstAsync<{ count: number }>(
-    "SELECT COUNT(*) as count FROM raw_observations"
-  );
-  return row?.count ?? 0;
+  if (cachedRawDbCount === null) {
+    const db = await getDatabase();
+    const row = await db.getFirstAsync<{ count: number }>(
+      "SELECT COUNT(*) as count FROM raw_observations"
+    );
+    cachedRawDbCount = row?.count ?? 0;
+  }
+  return cachedRawDbCount + rawWriteBuffer.length;
 }
 
 export async function nextSessionId(): Promise<string> {

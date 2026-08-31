@@ -159,7 +159,7 @@ export default function Index() {
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
-        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. IMU is collected in the foreground; Android may keep listeners alive with the existing location foreground service. iOS typically suspends IMU when backgrounded — gaps are real. No fusion, filtering, or auto-labeling is applied to this dataset.
+        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. Keep the recording notification visible when the screen is off. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
       </Text>
     </ScrollView>
   );

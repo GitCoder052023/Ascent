@@ -48,6 +48,12 @@ import {
   requestMotionPermissions,
   useRawSensorCollector,
 } from "./useRawSensorCollector";
+import {
+  ensureImuCollectorAlive,
+  isImuCollectorRunning,
+  startImuCollector,
+  stopImuCollector,
+} from "../lib/imuCollector";
 
 const KEY_STARTED = "@wifi_logger_started";
 const KEY_NETWORK = "@wifi_logger_network";
@@ -84,13 +90,13 @@ export function useWifiLogger() {
     source: Platform.OS === "android" ? "android-native" : "ios-estimated",
   });
 
-  const { isMoving, motionState, sampleIntervalMs } = useMotionDetector();
+  const { isMoving, motionState, sampleIntervalMs } = useMotionDetector({
+    enabled: appActive && !recording,
+    ownUpdateInterval: !recording,
+  });
   const interval = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSampleKey = useRef<string | null>(null);
-  const rawCollector = useRawSensorCollector({
-    enabled: recording,
-    device: DEVICE_META,
-  });
+  const rawCollector = useRawSensorCollector();
 
   function setFloor(next: Floor) {
     setFloorState(next);
@@ -137,6 +143,7 @@ export function useWifiLogger() {
         void loadMeasurements().then(setItems);
         void getRawObservationCount().then(setRawCount);
         void syncBackgroundStatus();
+        void ensureImuCollectorAlive();
       }
     });
 
@@ -167,6 +174,9 @@ export function useWifiLogger() {
         }
         if (storedNetwork) {
           setNetwork(storedNetwork);
+        }
+        if (!isImuCollectorRunning()) {
+          void startImuCollector(DEVICE_META);
         }
       }
     } catch {
@@ -302,6 +312,10 @@ export function useWifiLogger() {
     setCachedActivity(activity);
     setCachedRecording(true);
     setSessionId(newSessionId);
+    setStarted(now);
+    setSeconds(0);
+    setPaused(false);
+    setRecording(true);
 
     await AsyncStorage.setItem(KEY_STARTED, String(now));
     if (current.connectionState === "CONNECTED" && current.ssid) {
@@ -312,12 +326,14 @@ export function useWifiLogger() {
       setNetwork(null);
     }
 
+    await startImuCollector(DEVICE_META);
+
     let backgroundNotice: string | null = null;
     try {
       const bgOk = await startBackgroundLoggingAsync(floor);
       if (!bgOk) {
         backgroundNotice =
-          "Background Wi-Fi keep-alive could not start. Foreground IMU/Wi-Fi recording still runs while this screen stays open.";
+          "Background keep-alive could not start. Recording still runs while this screen stays open.";
       }
     } catch (e) {
       console.warn("Could not start background task:", e);
@@ -338,10 +354,6 @@ export function useWifiLogger() {
         .join(" ");
     }
 
-    setStarted(now);
-    setSeconds(0);
-    setPaused(false);
-    setRecording(true);
     setNotice(backgroundNotice);
 
     if (current.connectionState === "CONNECTED" && current.ssid) {
@@ -353,6 +365,7 @@ export function useWifiLogger() {
     setRecording(false);
     setPaused(false);
     setCachedRecording(false);
+    await stopImuCollector();
     await AsyncStorage.removeItem(KEY_STARTED);
     await AsyncStorage.removeItem(KEY_NETWORK);
     try {

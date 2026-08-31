@@ -1,11 +1,11 @@
 {
   "expo": {
     "name": "Ascent",
-    "slug": "WifiLogger",
+    "slug": "Ascent",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "wifilogger",
+    "scheme": "ascent",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
@@ -39,7 +39,7 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.WAKE_LOCK"
       ],
-      "package": "com.hamdan_khubaib.WifiLogger"
+      "package": "com.hamdan_khubaib.Ascent"
     },
     "web": {
       "output": "static",
@@ -50,6 +50,7 @@
       "expo-task-manager",
       "react-native-wifi-reborn",
       "expo-sqlite",
+      "./plugins/keep-android-imu-in-background",
       [
         "expo-sensors",
         {

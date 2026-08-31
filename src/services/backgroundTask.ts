@@ -6,6 +6,7 @@ import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
 import { flushRawWriteBuffer, flushWriteBuffer, Floor } from "../lib/db";
 import { createMeasurement, persistWifiMeasurement } from "../lib/dataset";
 import { KEY_LAST_MOTION } from "../hooks/useMotionDetector";
+import { ensureImuCollectorAlive } from "../lib/imuCollector";
 import {
   hydrateLabelsFromStorage,
   KEY_ACTIVE_FLOOR,
@@ -41,6 +42,9 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
   lastBackgroundSampleAt = now;
 
   try {
+    const labels = await hydrateLabelsFromStorage();
+    await ensureImuCollectorAlive().catch(() => {});
+
     const wifi = await getConnectedWifi();
     if (wifi.connectionState !== "CONNECTED" || !wifi.ssid) {
       return;
@@ -72,14 +76,12 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
       }
     }
 
-    const labels = await hydrateLabelsFromStorage();
     const currentFloor =
       labels.floor === "GROUND_FLOOR" || labels.floor === "FLOOR_1" || labels.floor === "FLOOR_2"
         ? labels.floor
         : activeFloor;
 
     const processed = processWifiSignal(wifi, isMoving);
-
     const item = createMeasurement(currentFloor, wifi, processed);
     await persistWifiMeasurement(item, {
       sessionId: labels.sessionId,
@@ -117,25 +119,31 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
       }
     }
 
-    // GPS here is only a keep-alive / wakeup for the foreground service.
-    // High accuracy + 1 m updates caused Android to schedule a JobScheduler
-    // task on every indoor GPS jump while the Activity was visible.
-    await Location.startLocationUpdatesAsync(WIFI_LOGGER_BACKGROUND_TASK, {
-      accuracy: Location.Accuracy.Balanced,
-      distanceInterval: Platform.OS === "android" ? 25 : 10,
-      timeInterval: 15000,
-      deferredUpdatesInterval: 15000,
-      deferredUpdatesDistance: 25,
-      pausesUpdatesAutomatically: false,
-      showsBackgroundLocationIndicator: true,
-      activityType: Location.ActivityType.Fitness,
-      mayShowUserSettingsDialog: false,
-      foregroundService: {
-        notificationTitle: "Ascent is recording",
-        notificationBody: "Recording raw observations. IMU continues only while the OS keeps the app alive.",
-        killServiceOnDestroy: false,
-      },
-    });
+    const alreadyRunning = await TaskManager.isTaskRegisteredAsync(
+      WIFI_LOGGER_BACKGROUND_TASK
+    );
+    if (!alreadyRunning) {
+      // GPS is only a keep-alive / wakeup for the foreground service.
+      // High accuracy + 1 m / frequent updates caused Android to schedule a
+      // JobScheduler task on every indoor GPS jump while the Activity was
+      // visible, which killed and restarted the UI in a loop.
+      await Location.startLocationUpdatesAsync(WIFI_LOGGER_BACKGROUND_TASK, {
+        accuracy: Location.Accuracy.Balanced,
+        distanceInterval: Platform.OS === "android" ? 25 : 10,
+        timeInterval: 15000,
+        deferredUpdatesInterval: 15000,
+        deferredUpdatesDistance: 25,
+        pausesUpdatesAutomatically: false,
+        showsBackgroundLocationIndicator: true,
+        activityType: Location.ActivityType.Fitness,
+        mayShowUserSettingsDialog: false,
+        foregroundService: {
+          notificationTitle: "Ascent is recording",
+          notificationBody: "Keep this notification visible. IMU and Wi-Fi rows are being written.",
+          killServiceOnDestroy: false,
+        },
+      });
+    }
 
     if (Platform.OS === "android") {
       const bg = await Location.getBackgroundPermissionsAsync();

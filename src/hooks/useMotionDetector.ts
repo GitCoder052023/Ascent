@@ -11,7 +11,13 @@ const MOTION_HANGOVER_MS = 6000;
 // Sample accelerometer every 100ms (10Hz) for high precision
 const SENSOR_INTERVAL_MS = 100;
 
-export function useMotionDetector() {
+export function useMotionDetector({
+  enabled,
+  ownUpdateInterval,
+}: {
+  enabled: boolean;
+  ownUpdateInterval: boolean;
+}) {
   const [isMoving, setIsMoving] = useState(false);
   const windowRef = useRef<number[]>([]);
   const gravityRef = useRef<number>(1.0);
@@ -19,7 +25,13 @@ export function useMotionDetector() {
   const lastPersistRef = useRef<number>(0);
 
   useEffect(() => {
-    Accelerometer.setUpdateInterval(SENSOR_INTERVAL_MS);
+    if (!enabled) {
+      return;
+    }
+
+    if (ownUpdateInterval) {
+      Accelerometer.setUpdateInterval(SENSOR_INTERVAL_MS);
+    }
 
     const subscription = Accelerometer.addListener(({ x, y, z }) => {
       // Total acceleration magnitude vector (approx 1.0 G at rest)
@@ -72,7 +84,7 @@ export function useMotionDetector() {
     return () => {
       subscription.remove();
     };
-  }, []);
+  }, [enabled, ownUpdateInterval]);
 
   const motionState: MotionState = isMoving ? "WALKING" : "STATIONARY";
   // 3s interval when walking, 30s interval when stationary

@@ -46,6 +46,7 @@
   "scripts": {
     "start": "expo start",
     "reset-project": "node ./scripts/reset-project.js",
+    "postinstall": "node plugins/keep-android-imu-in-background.js",
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
