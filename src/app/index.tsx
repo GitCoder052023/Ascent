@@ -4,8 +4,15 @@ import { Metric } from "../components/Metric";
 import { Section } from "../components/Section";
 import { useWifiLogger } from "../hooks/useWifiLogger";
 import type { Floor } from "../lib/dataset";
-import { formatDuration, formatUnavailable } from "../utils/format";
+import { ACTIVITY_OPTIONS, FLOOR_OPTIONS } from "../lib/rawTypes";
+import { formatDuration } from "../utils/format";
 import { styles } from "../styles/appStyles";
+
+const FLOOR_SUB: Record<Floor, string> = {
+  GROUND_FLOOR: "Ground",
+  FLOOR_1: "Strength area",
+  FLOOR_2: "Cardio area",
+};
 
 export default function Index() {
   const logger = useWifiLogger();
@@ -15,42 +22,30 @@ export default function Index() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>GYM EXPERIMENT</Text>
-        <Text style={styles.title}>Wi‑Fi Floor{"\n"}Data Logger</Text>
+        <Text style={styles.title}>Raw Sensor{"\n"}Dataset Logger</Text>
       </View>
 
       <View style={styles.status}>
         <View
           style={[
             styles.dot,
-            logger.wifi.connectionState === "CONNECTED"
-              ? styles.good
-              : styles.muted,
+            logger.recording ? styles.good : styles.muted,
           ]}
         />
         <View style={{ flex: 1 }}>
-          <Text style={styles.statusLabel}>CONNECTED WI‑FI</Text>
+          <Text style={styles.statusLabel}>RECORDER</Text>
           <Text style={styles.statusValue}>
-            {logger.wifi.connectionState === "CONNECTED"
-              ? formatUnavailable(logger.wifi.ssid)
-              : "Not connected"}
+            {logger.recording
+              ? logger.paused
+                ? "Wi-Fi paused · IMU on"
+                : "Recording"
+              : "Idle"}
           </Text>
         </View>
         <View style={{ alignItems: "flex-end" }}>
-          <Text style={styles.rssi}>
-            {logger.lastProcessed.estimatedDbm !== null
-              ? `${logger.lastProcessed.estimatedDbm} dBm`
-              : logger.wifi.signalStrength === null
-              ? "—"
-              : `${logger.wifi.signalStrength} dBm`}
-          </Text>
-          <Text style={{ fontSize: 11, color: "#208AEF", fontWeight: "600" }}>
-            {logger.lastProcessed.source === "android-native"
-              ? logger.lastProcessed.frequencyBand !== "UNKNOWN"
-                ? `${logger.lastProcessed.frequencyBand} · native`
-                : "native"
-              : logger.lastProcessed.frequencyBand !== "UNKNOWN"
-                ? `${logger.lastProcessed.frequencyBand} · est`
-                : "est"}
+          <Text style={styles.rssi}>{logger.sessionId ?? "NO SESSION"}</Text>
+          <Text style={{ fontSize: 11, color: "#78E3B4", fontWeight: "600" }}>
+            {logger.activity ?? logger.floor}
           </Text>
         </View>
       </View>
@@ -67,7 +62,7 @@ export default function Index() {
 
       <Text style={styles.label}>CURRENT FLOOR LABEL</Text>
       <View style={styles.floorRow}>
-        {(["FLOOR_1", "FLOOR_2"] as Floor[]).map((item) => (
+        {FLOOR_OPTIONS.map((item) => (
           <Pressable
             key={item}
             onPress={() => logger.setFloor(item)}
@@ -79,7 +74,7 @@ export default function Index() {
                 logger.floor === item && styles.floorTextActive,
               ]}
             >
-              {item.replace("_", " ")}
+              {item.replaceAll("_", " ")}
             </Text>
             <Text
               style={[
@@ -87,10 +82,31 @@ export default function Index() {
                 logger.floor === item && styles.floorTextActive,
               ]}
             >
-              {item === "FLOOR_1" ? "Strength area" : "Cardio area"}
+              {FLOOR_SUB[item]}
             </Text>
           </Pressable>
         ))}
+      </View>
+
+      <Text style={styles.label}>MANUAL ACTIVITY LABEL</Text>
+      <View style={styles.floorRow}>
+        {ACTIVITY_OPTIONS.map((item) => {
+          const active = logger.activity === item;
+          return (
+            <Pressable
+              key={item}
+              onPress={() => logger.setActivity(active ? null : item)}
+              style={[styles.floor, active && styles.activityActive]}
+            >
+              <Text style={[styles.floorText, active && styles.activityTextActive]}>
+                {item.replaceAll("_", " ")}
+              </Text>
+              <Text style={[styles.floorSub, active && styles.activityTextActive]}>
+                {active ? "Tap to clear" : "Tap to set"}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
 
       <View style={styles.metrics}>
@@ -99,7 +115,7 @@ export default function Index() {
           value={logger.recording ? (logger.paused ? "PAUSED" : "● YES") : "NO"}
           accent={logger.recording && !logger.paused}
         />
-        <Metric label="MEASUREMENTS" value={String(logger.items.length)} />
+        <Metric label="RAW ROWS" value={String(logger.rawCount)} />
         <Metric label="DURATION" value={formatDuration(logger.seconds)} />
       </View>
 
@@ -109,15 +125,15 @@ export default function Index() {
             MOTION STATE
           </Text>
           <Text style={{ fontSize: 14, fontWeight: "700", color: "#1C1C1E", marginTop: 2 }}>
-            {logger.isMoving ? "WALKING" : "STATIONARY"}
+            {logger.motionState}
           </Text>
         </View>
         <View style={[styles.floor, { flex: 1, paddingVertical: 10 }]}>
           <Text style={{ fontSize: 10, color: "#8E8E93", fontWeight: "600" }}>
-            ADAPTIVE RATE
+            WIFI INTERVAL
           </Text>
           <Text style={{ fontSize: 14, fontWeight: "700", color: "#208AEF", marginTop: 2 }}>
-            {Math.round(logger.sampleIntervalMs / 1000)}s INTERVAL
+            {Math.round(logger.sampleIntervalMs / 1000)}s
           </Text>
         </View>
       </View>
@@ -132,18 +148,34 @@ export default function Index() {
       </Pressable>
       {logger.paused && (
         <Pressable onPress={() => void logger.resume()} style={styles.secondary}>
-          <Text style={styles.secondaryText}>RESUME ON ORIGINAL WI‑FI</Text>
+          <Text style={styles.secondaryText}>RESUME WI‑FI SAMPLING</Text>
         </Pressable>
       )}
 
+      <SensorStatus logger={logger} />
       <ConnectionSection logger={logger} />
       <LatestMeasurement latest={latest} />
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
-        Background logging is enabled. The app continues logging Wi-Fi measurements smoothly even when your screen is locked or the app is backgrounded.
+        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. IMU is collected in the foreground; Android may keep listeners alive with the existing location foreground service. iOS typically suspends IMU when backgrounded — gaps are real. No fusion, filtering, or auto-labeling is applied to this dataset.
       </Text>
     </ScrollView>
+  );
+}
+
+function SensorStatus({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
+  const a = logger.availability;
+  return (
+    <Section title="SENSOR AVAILABILITY">
+      <InfoRow label="Accelerometer" value={a.accelerometerAvailable ? "available" : "unavailable"} />
+      <InfoRow label="Gyroscope" value={a.gyroscopeAvailable ? "available" : "unavailable"} />
+      <InfoRow label="Barometer" value={a.barometerAvailable ? "available" : "unavailable"} />
+      <InfoRow label="Last accel row" value={logger.latestRaw.accelerometer} />
+      <InfoRow label="Last gyro row" value={logger.latestRaw.gyroscope} />
+      <InfoRow label="Last pressure row" value={logger.latestRaw.barometer} />
+      <InfoRow label="Wi-Fi samples" value={logger.items.length} />
+    </Section>
   );
 }
 
@@ -186,11 +218,11 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
 
 function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger>["items"][number] | undefined }) {
   return (
-    <Section title="LATEST MEASUREMENT">
+    <Section title="LATEST WI‑FI MEASUREMENT">
       {latest ? (
         <>
-          <InfoRow label="Time" value={new Date(latest.timestamp).toLocaleTimeString()} />
-          <InfoRow label="Floor" value={latest.floor.replace("_", " ")} />
+          <InfoRow label="Time" value={new Date(latest.timestamp).toISOString()} />
+          <InfoRow label="Floor" value={latest.floor.replaceAll("_", " ")} />
           <InfoRow label="SSID" value={latest.ssid} />
           <InfoRow
             label="Signal"
@@ -209,14 +241,14 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
           />
         </>
       ) : (
-        <Text style={styles.empty}>No measurements yet.</Text>
+        <Text style={styles.empty}>No Wi-Fi measurements yet.</Text>
       )}
     </Section>
   );
 }
 
 function DatasetActions({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
-  const disabled = !logger.items.length;
+  const disabled = logger.rawCount === 0 && !logger.items.length;
 
   return (
     <>

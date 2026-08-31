@@ -1,8 +1,8 @@
 # 📶 WifiLogger
 
-> **⚠️ Important Context:** WifiLogger was originally built as an **internal testing tool** while developing a product for a client. It was never intended to be a polished, general-purpose application. We're open-sourcing it as-is because we believe the underlying techniques — background Wi-Fi sampling, Kalman-filtered signal estimation, motion-adaptive polling — are genuinely useful and hard to find good references for. Take what's useful, ignore what's rough.
+> **⚠️ Important Context:** WifiLogger started as an **internal testing tool** for labeled Wi-Fi signal collection in a gym. It now also records a **purely raw, timestamped, manually labeled multi-sensor dataset** (accelerometer, gyroscope, barometer, Wi-Fi, and the existing motion state) for later research. It is not a polished consumer app. Take what's useful, ignore what's rough.
 
-A React Native (Expo) app that continuously logs Wi-Fi signal data across physical floors/zones — in the foreground **and** background — and exports structured datasets for analysis.
+A React Native (Expo) app that records independent raw sensor observations while you walk a multi-floor space, then exports CSV/JSON for analysis **after** collection. This phase does **not** do sensor fusion, stair detection, ML, interpolation, or derived altitude.
 
 Built with Expo SDK 57 · React Native 0.86 · TypeScript
 
@@ -10,17 +10,34 @@ Built with Expo SDK 57 · React Native 0.86 · TypeScript
 
 ## What It Does
 
-WifiLogger connects to your current Wi-Fi network and records signal measurements at adaptive intervals. It was designed for walking around a multi-floor space and collecting labeled signal-strength data per zone.
+Start a recording session, set the current **floor** and optional **activity** label by hand, then move. Every observation stored while a label is active carries that label. Sensors are **not** aligned onto a shared clock.
 
 **Core capabilities:**
 
-- **Cross-platform Wi‑Fi collection** — Android reads native RSSI in dBm from the connected AP; iOS does not expose a continuous raw dBm stream the same way, so the app uses a custom estimate pipeline instead
-- **Background-efficient logging** — continues recording when the app is backgrounded or the screen is locked, using platform-native mechanisms (Android Foreground Service, iOS Background Location)
-- **Motion-adaptive sampling** — uses accelerometer data to detect walking vs. stationary states, sampling every **3 seconds** while moving and every **30 seconds** when still
-- **Floor/zone labeling** — tag measurements with a floor label (FLOOR_1 / FLOOR_2) to build per-zone datasets
-- **Dataset export** — export all collected measurements as **CSV** or **JSON** via the native share sheet
-- **SQLite persistence** — measurements are stored locally in SQLite with WAL journaling and buffered writes, surviving app restarts
-- **iOS RSSI reconstruction** — a dedicated `SignalEstimationEngine` turns coarse iOS signal scores into usable estimated dBm values so the dataset remains comparable across platforms
+- **Raw IMU + pressure** — accelerometer (x/y/z), gyroscope (x/y/z), and barometer pressure when the device has one. Values are stored as the platform reported them
+- **Independent rows** — one sensor event = one dataset row. Empty fields on that row are intentional (no forward-fill, no resampling)
+- **Manual ground truth** — `GROUND_FLOOR` / `FLOOR_1` / `FLOOR_2` and `GOING_UPSTAIRS` / `COMING_DOWNSTAIRS`. The app never infers stairs or floor from sensors
+- **Recording sessions** — each run gets a `sessionId` such as `SESSION_001` so gym experiments stay separable
+- **Existing Wi‑Fi logging** — connected AP SSID, BSSID, RSSI, frequency; adaptive 3s / 30s interval from the motion detector. Recording can start **without** Wi-Fi
+- **Existing motion detector** — `WALKING` / `STATIONARY` is copied onto each raw row as `motionState`. It does **not** replace raw accelerometer values
+- **Background Wi‑Fi** — continues on location keep-alive (Android foreground service, iOS background location). IMU in the background is OS-dependent and never fabricated
+- **SQLite persistence** — WAL + buffered writes; data survives app restarts
+- **Export** — unified raw CSV, or JSON with `{ sessions, observations }`
+
+The on-screen Wi-Fi panel still uses the existing iOS Kalman / band estimate for display. Those derived Wi-Fi fields stay in the legacy `measurements` table and are **not** added to the raw export.
+
+---
+
+## What This Dataset Is Not
+
+The raw export must not contain (and the collector does not compute):
+
+- filtered / smoothed IMU
+- estimated altitude or floor height from pressure
+- sensor fusion, Kalman on IMU, interpolation, resampling, or a synchronized snapshot of all sensors at one timestamp
+- automatic activity or stair recognition
+
+Analysis happens later from the exported file.
 
 ---
 
@@ -34,7 +51,7 @@ WifiLogger connects to your current Wi-Fi network and records signal measurement
 | Wi-Fi APIs | `@react-native-community/netinfo`, `react-native-wifi-reborn` |
 | Background | `expo-task-manager`, `expo-location` (foreground service / background location) |
 | Storage | `expo-sqlite` (WAL mode, buffered writes) |
-| Sensors | `expo-sensors` (Accelerometer) |
+| Sensors | `expo-sensors` (Accelerometer, Gyroscope, Barometer) |
 | Export | `expo-file-system`, `expo-sharing` |
 
 ---
@@ -42,55 +59,83 @@ WifiLogger connects to your current Wi-Fi network and records signal measurement
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────┐
-│                    UI Layer                  │
-│              src/app/index.tsx               │
-│    Floor selector · Metrics · Export actions │
-└──────────────────┬──────────────────────────┘
-                   │
-          ┌────────▼────────┐
-          │  useWifiLogger   │  Main orchestrator hook
-          │  useMotionDetect │  Accelerometer → walking/stationary
-          └────────┬────────┘
-                   │
-     ┌─────────────┼─────────────┐
-     ▼             ▼             ▼
- lib/wifi.ts   lib/signal    lib/db.ts
- NetInfo +     Engine.ts     SQLite WAL +
- WifiManager   Kalman +      buffered writes
-               Band Model
-                   │
-                   ▼
-          services/backgroundTask.ts
-          expo-task-manager + expo-location
-          (foreground service / bg location)
+┌──────────────────────────────────────────────────┐
+│                    UI Layer                       │
+│                 src/app/index.tsx                 │
+│  Session · floor/activity labels · sensors · export │
+└────────────────────────┬─────────────────────────┘
+                         │
+              ┌──────────▼──────────┐
+              │   useWifiLogger     │  Orchestrator
+              │   useMotionDetector │  Accel → WALKING/STATIONARY
+              │   useRawSensorCollector │ Independent IMU/baro rows
+              └──────────┬──────────┘
+                         │
+     ┌─────────┬─────────┼─────────┬─────────┐
+     ▼         ▼         ▼         ▼         ▼
+ lib/wifi   signal    rawObs    recording   db.ts
+ NetInfo +  Engine    builders  context    measurements +
+ WifiMgr    (UI/iOS   + types   labels     raw_observations +
+            only)                          recording_sessions
+                         │
+                         ▼
+                services/backgroundTask.ts
+                Wi-Fi sample on location wakeup
 ```
 
-### Android vs. iOS RSSI Collection
+**Flow:** phone sensor/Wi-Fi event → receipt timestamp + optional native `sensorTimestamp` → current manual labels → SQLite → CSV/JSON.
 
-The key behavior is different by platform, and that difference is why we needed a separate iOS-only estimation path.
+### One observation = one row
+
+Different sensors fire at different times. A stretch of CSV looks like:
+
+```text
+timestamp                      sensorType       accelX   gyroX   pressure   RSSI
+2026-08-31T22:10:00.001Z       accelerometer    0.12     (empty) (empty)    (empty)
+2026-08-31T22:10:00.018Z       gyroscope        (empty)  0.01    (empty)    (empty)
+2026-08-31T22:10:01.000Z       barometer        (empty)  (empty) 1008.42    (empty)
+2026-08-31T22:10:03.000Z       wifi             (empty)  (empty) (empty)    -57
+```
+
+NULLs are the raw representation. They are not filled from the previous sample.
+
+### Timestamps
+
+| Field | Meaning |
+|---|---|
+| `timestamp` / `arrivalTimestamp` | ISO-8601 UTC with milliseconds — when **this app** received the event |
+| `sensorTimestamp` | Expo/native `measurement.timestamp` in **seconds** when the API provides it (typically time since boot). **Not** Unix time and never rewritten as ISO |
+| `timestampSource` | Always `arrival` for the ISO fields. The dataset does not pretend a receipt time is a hardware clock |
+
+Wi-Fi rows have no native IMU-style sensor clock; `sensorTimestamp` is empty.
+
+### Manual labels
+
+While `GOING_UPSTAIRS` (or a floor) is selected, **every** subsequent row — accel, gyro, baro, Wi-Fi — repeats that label until you change or clear it. Sensors never override the label.
+
+### Android vs. iOS RSSI (legacy Wi-Fi path)
+
+Wi-Fi collection is unchanged in role: another raw observation source. Platform differences:
 
 | Platform | What the OS gives us | How we use it |
 |---|---|---|
-| Android | Native connected-AP RSSI in dBm via `WifiManager.getCurrentSignalStrength()` and Wi‑Fi frequency | Store it directly as `signalStrength` and treat it as the ground truth for that sample |
-| iOS | No continuous raw dBm stream from the connected AP in the way Android exposes it; background reads are coarse and normalized | Convert the available normalized score into an estimated dBm value using a custom reconstruction engine |
+| Android | Native connected-AP RSSI in dBm via `WifiManager.getCurrentSignalStrength()` and frequency | Stored as `signalStrength` on the **wifi** row |
+| iOS | No continuous raw dBm stream like Android; scores are coarse | Best available value on the wifi row; the Kalman `SignalEstimationEngine` still runs for **on-screen** estimates only |
 
-On Android, the app can read a relatively steady stream of Wi‑Fi metrics directly from the native stack. That makes the data collection path straightforward: native dBm → smoothing/filtering if needed → exported dataset.
+The iOS engine still: (1) normalizes the score, (2) applies a 1D Kalman filter with motion-aware process noise (`Q=0.30` walking, `Q=0.01` stationary), (3) maps to band-calibrated dBm. Those reconstructed columns are **not** in the unified raw CSV.
 
-On iOS, we do not get the same kind of continuous raw RSSI stream. In practice, the app receives a normalized / quantized signal score from the system rather than a true, ongoing dBm trace. That is not enough to produce a comparable floor-strength dataset without additional modeling. So we built a dedicated `SignalEstimationEngine` that:
+### Motion detection
 
-1. **Normalizes** the iOS signal score into a 0–1 value (handling both native dBm and percentage-style inputs when present)
-2. **Applies a 1D Kalman filter** to smooth the noisy score with motion-aware process noise (`Q=0.30` when walking, `Q=0.01` when stationary)
-3. **Maps the smoothed score back to dBm** using band-aware calibration for the actual Wi‑Fi band:
-   - 2.4 GHz: −92 to −28 dBm
-   - 5 GHz: −88 to −32 dBm
-   - 6 GHz: −84 to −35 dBm
+`useMotionDetector` still runs the accelerometer at 10 Hz (20 Hz requested while a raw session is active, because `setUpdateInterval` is shared). It high-pass filters gravity, then uses a dual threshold (step peak > 0.045 G **or** window variance > 0.005) with a 6-second hangover. Output is `WALKING` / `STATIONARY` and still drives Wi-Fi 3s / 30s polling. Raw accel rows store **unfiltered** x/y/z from a separate listener.
 
-This is not a perfect replacement for true native RSSI. It is a best-effort reconstruction that allows the app to produce a comparable signal series on iOS for the same floor-mapping task. In other words, the app uses the same target outcome across both platforms — a continuous, labeled signal-strength dataset — but the iOS path had to invent its own estimation layer because the platform itself does not natively supply the raw dBm stream Android does.
+### Foreground vs background
 
-### Motion Detection
+| | Foreground | Background |
+|---|---|---|
+| **IMU / barometer** | `expo-sensors` listeners. Requested intervals are hints (20 ms accel/gyro, 200 ms barometer), not a common sample rate | **Android:** the location foreground service *may* keep JS alive so listeners continue; not guaranteed. **iOS:** the process is usually suspended; continuous IMU/baro is not provided by Expo and is not faked |
+| **Wi-Fi** | Adaptive interval while the screen is active | Location task wakeups; rows get the labels last stored in AsyncStorage |
 
-The `useMotionDetector` hook runs the accelerometer at 10 Hz, applies a high-pass filter to isolate linear acceleration from gravity, and uses a dual-threshold approach (instantaneous step peak > 0.045 G **or** sliding-window variance > 0.005) with a 6-second hangover to classify walking vs. stationary.
+Gaps are valid data. Missing barometer hardware → no pressure rows; other sensors continue.
 
 ---
 
@@ -101,73 +146,101 @@ The `useMotionDetector` hook runs the accelerometer at 10 Hz, applies a high-pas
 - Node.js ≥ 18
 - [Expo CLI](https://docs.expo.dev/get-started/installation/)
 - For device builds: [EAS CLI](https://docs.expo.dev/eas/) (`npm install -g eas-cli`)
-- A physical device (Wi-Fi APIs don't work on simulators/emulators)
+- A **physical device** (Wi-Fi and motion APIs are not useful on simulators)
 
 ### Install & Run
 
 ```bash
-# Clone the repo
 git clone https://github.com/your-username/WifiLogger.git
 cd WifiLogger
 
-# Install dependencies
 npm install
 
-# Start the dev server
 npx expo start
 ```
 
+After changing the `expo-sensors` config plugin (motion usage string), make a **new native build**.
+
 ### Building for Device
 
-This app requires a **development build** (not Expo Go) because it uses native modules (`react-native-wifi-reborn`, `expo-task-manager`, etc.).
+This app needs a **development build** (not Expo Go) because of native modules (`react-native-wifi-reborn`, `expo-task-manager`, sensors, etc.).
 
 ```bash
-# Development build (internal distribution)
 eas build --profile development --platform android
 eas build --profile development --platform ios
 
-# Preview APK (Android)
 eas build --profile preview --platform android
+```
+
+### Gym recording
+
+1. Start recording (creates `SESSION_00N`). Wi-Fi is optional.
+2. Set the floor label; tap an activity label when you actually go up/down stairs; tap again to clear.
+3. Stop, then **Export CSV** (or JSON).
+
+Builder checks for row shape / NULLs / labels:
+
+```bash
+node --experimental-strip-types --no-warnings scripts/verify-raw-observation.mjs
 ```
 
 ---
 
 ## Permissions
 
-The app requests the following permissions — all necessary for Wi-Fi signal access and background logging:
-
 | Permission | Why |
 |---|---|
-| `ACCESS_FINE_LOCATION` | Required by Android to read Wi-Fi SSID and BSSID |
-| `ACCESS_BACKGROUND_LOCATION` | Background Wi-Fi sampling when app is not in foreground |
-| `FOREGROUND_SERVICE` | Android foreground service for continuous logging |
-| `POST_NOTIFICATIONS` | Android 13+ notification for the foreground service |
-| `WAKE_LOCK` | Prevent CPU sleep during background sampling |
-| iOS Location (Always) | Background location triggers used as a keep-alive for Wi-Fi reads |
+| `ACCESS_FINE_LOCATION` | Android: read Wi-Fi SSID / BSSID |
+| `ACCESS_BACKGROUND_LOCATION` | Background Wi-Fi sampling |
+| `FOREGROUND_SERVICE` | Android foreground service |
+| `POST_NOTIFICATIONS` | Android 13+ FGS notification |
+| `WAKE_LOCK` | Reduce CPU sleep during background sampling |
+| iOS Location (Always) | Location wakeups used as keep-alive for Wi-Fi |
+| iOS motion (`NSMotionUsageDescription`) | Accelerometer, gyroscope, barometer via `expo-sensors` |
 
 ---
 
 ## Exported Data Schema
 
-Each measurement (CSV/JSON) contains a single record from either the native Android path or the iOS estimation pipeline. The exported schema keeps both the raw/native and reconstructed values so the dataset can be compared across platforms.
+**CSV** is one table of `raw_observations` (legacy Wi-Fi rows are migrated in as `sensorType=wifi`). **JSON** is:
+
+```json
+{ "sessions": [ /* capability metadata */ ], "observations": [ /* same fields as CSV */ ] }
+```
+
+### Observation columns
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | string | Unique measurement ID |
-| `timestamp` | ISO 8601 | When the measurement was taken |
-| `floor` | `FLOOR_1` \| `FLOOR_2` | User-selected zone label |
-| `ssid` | string | Connected Wi-Fi network name |
-| `bssid` | string | Access point MAC address |
-| `signalStrength` | number | Native RSSI in dBm on Android. On iOS this is the best available signal value before reconstruction, often a coarse normalized score converted to an approximation before storage. |
-| `signalStrengthUnit` | `dBm` | Unit used for the raw/native signal |
-| `frequency` | number | Wi-Fi frequency in MHz |
-| `connectionType` | `wifi` | Always "wifi" |
-| `platform` | string | `ios` or `android` |
-| `deviceModel` | string | Device model name |
-| `osVersion` | string | OS version string |
-| `signalStrengthNormalized` | number | Kalman-smoothed normalized score (0–1), generated for both platforms to keep downstream processing consistent |
-| `signalStrengthEstimatedDbm` | number | Band-calibrated estimated dBm. Android often uses the native value directly; iOS uses the custom reconstruction engine |
-| `frequencyBand` | string | `2.4GHz`, `5GHz`, `6GHz`, or `UNKNOWN` |
+| `id` | string | Unique observation ID |
+| `sessionId` | string | e.g. `SESSION_001` |
+| `timestamp` | ISO 8601 UTC (ms) | App receipt time |
+| `arrivalTimestamp` | ISO 8601 UTC (ms) | Same as `timestamp` |
+| `sensorTimestamp` | number or empty | Native Expo timestamp in seconds, if any |
+| `timestampSource` | `arrival` | Documents that ISO times are receipt times |
+| `sensorType` | `accelerometer` \| `gyroscope` \| `barometer` \| `wifi` | Which stream produced the row |
+| `floor` | `GROUND_FLOOR` \| `FLOOR_1` \| `FLOOR_2` | Manual floor label |
+| `activity` | `GOING_UPSTAIRS` \| `COMING_DOWNSTAIRS` or empty | Manual activity label |
+| `accelerometerX/Y/Z` | number or empty | Raw g's; filled only on accelerometer rows |
+| `gyroscopeX/Y/Z` | number or empty | Raw rad/s; gyroscope rows only |
+| `barometerPressure` | number or empty | Raw pressure (hPa as reported); barometer rows only |
+| `motionState` | `WALKING` \| `STATIONARY` | Existing detector at receipt time |
+| `ssid` / `bssid` / `signalStrength` / `signalStrengthUnit` / `frequency` / `connectionType` | Wi-Fi fields or empty | Filled only on wifi rows |
+| `platform` / `deviceModel` / `osVersion` | string | Device metadata |
+
+Numeric values are written with JS `String(n)` (no extra rounding).
+
+### Session metadata (JSON `sessions`)
+
+| Field | Description |
+|---|---|
+| `id` | Session identifier |
+| `startedAt` / `endedAt` | ISO timestamps |
+| `accelerometerAvailable` / `gyroscopeAvailable` / `barometerAvailable` | Probed at session start |
+| `platform` / `deviceModel` / `osVersion` | Device |
+| `notes` | Written platform limitations (foreground vs background, timestamp meaning) |
+
+The SQLite `measurements` table still holds the older Wi-Fi-only schema including `signalStrengthNormalized`, `signalStrengthEstimatedDbm`, and `frequencyBand` for the in-app Wi-Fi UI. Those columns are **not** in the unified raw export.
 
 ---
 
@@ -176,40 +249,49 @@ Each measurement (CSV/JSON) contains a single record from either the native Andr
 ```
 src/
 ├── app/
-│   ├── _layout.tsx          # Root layout
-│   └── index.tsx            # Main screen UI
+│   ├── _layout.tsx                 # Root layout
+│   └── index.tsx                   # Session, labels, sensors, export
 ├── components/
-│   ├── InfoRow.tsx           # Key-value display row
-│   ├── Metric.tsx            # Metric card
-│   └── Section.tsx           # Collapsible section wrapper
+│   ├── InfoRow.tsx
+│   ├── Metric.tsx
+│   └── Section.tsx
 ├── constants/
-│   └── app.ts               # App-wide constants
+│   └── app.ts
 ├── hooks/
-│   ├── useMotionDetector.ts  # Accelerometer-based motion detection
-│   └── useWifiLogger.ts      # Main logging orchestrator
+│   ├── useMotionDetector.ts        # Accel → walking/stationary
+│   ├── useRawSensorCollector.ts    # Raw accel/gyro/baro listeners
+│   └── useWifiLogger.ts            # Orchestrator
 ├── lib/
-│   ├── dataset.ts            # Measurement CRUD + export
-│   ├── db.ts                 # SQLite database layer
-│   ├── signalEngine.ts       # Kalman filter + band calibration
-│   └── wifi.ts               # Wi-Fi snapshot via NetInfo + WifiManager
+│   ├── dataset.ts                  # Wi-Fi measurement + dual-write to raw
+│   ├── db.ts                       # SQLite: measurements, raw_observations, sessions
+│   ├── rawObservation.ts           # Row builders (one sensor per row)
+│   ├── rawTypes.ts                 # Schema, labels, CSV columns
+│   ├── recordingContext.ts         # Active session/floor/activity/motion
+│   ├── signalEngine.ts             # Kalman + band calibration (Wi-Fi UI / iOS)
+│   └── wifi.ts                     # NetInfo + WifiManager
 ├── services/
-│   └── backgroundTask.ts     # Background logging task
+│   └── backgroundTask.ts           # Background Wi-Fi samples
 ├── styles/
-│   └── appStyles.ts          # Stylesheet
+│   └── appStyles.ts
 └── utils/
-    └── format.ts             # Formatting helpers
+    └── format.ts
+scripts/
+└── verify-raw-observation.mjs      # Row-shape / NULL / label checks
 ```
 
 ---
 
 ## Known Limitations
 
-This was an internal tool — treat it accordingly:
+Internal gym tool — treat it accordingly:
 
-- **Hardcoded to two floors** — the floor labels (`FLOOR_1` / `FLOOR_2`) and their descriptions ("Strength area" / "Cardio area") are hardcoded for the specific gym we were testing in. You'll want to make these configurable for your use case.
-- **iOS signal estimation is approximate** — the Kalman + band-model approach produces reasonable estimates but they're not ground truth. Use them as relative indicators.
-- **No scan of nearby networks** — only the currently connected AP is logged. This intentionally avoids `WifiManager.loadWifiList()` to stay within background constraints.
-- **No remote sync** — all data stays on-device. Export manually via the share sheet.
+- **Labels are gym-specific** — floors (`GROUND_FLOOR`, `FLOOR_1` / Strength, `FLOOR_2` / Cardio) and stair activities are hardcoded.
+- **Background IMU is not guaranteed** — especially on iOS. Wi-Fi background logging still uses location wakeups.
+- **Barometer is optional** — if `isAvailableAsync()` is false, there are no pressure rows.
+- **iOS Wi-Fi dBm is still approximate** on the live UI — not a substitute for Android native RSSI; reconstructed fields are omitted from the raw CSV.
+- **No nearby-network scan** — only the connected AP. Avoids `WifiManager.loadWifiList()` for background constraints.
+- **No remote sync** — export via the share sheet.
+- **Receipt vs sensor clock** — ISO timestamps are app arrival time; do not treat `sensorTimestamp` as Unix.
 
 ---
 

@@ -50,7 +50,12 @@
       "expo-task-manager",
       "react-native-wifi-reborn",
       "expo-sqlite",
-      "expo-sensors",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "WifiLogger records raw accelerometer, gyroscope, and barometer measurements for gym movement research."
+        }
+      ],
       [
         "expo-location",
         {

@@ -2,8 +2,10 @@ import * as SQLite from "expo-sqlite";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
+import { csvCell } from "./rawObservation";
+import { RAW_CSV_COLUMNS, type Floor, type RawObservation, type RecordingSession } from "./rawTypes";
 
-export type Floor = "FLOOR_1" | "FLOOR_2";
+export type { Floor };
 
 export type Measurement = {
   id: string;
@@ -30,8 +32,11 @@ let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 let writeBuffer: Measurement[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let activeFlushPromise: Promise<void> | null = null;
+let rawWriteBuffer: RawObservation[] = [];
+let rawFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let activeRawFlushPromise: Promise<void> | null = null;
 
-async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!dbPromise) {
     dbPromise = (async () => {
       const db = await SQLite.openDatabaseAsync(DB_NAME);
@@ -56,7 +61,52 @@ async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
         );
         CREATE INDEX IF NOT EXISTS idx_timestamp ON measurements(timestamp);
         CREATE INDEX IF NOT EXISTS idx_floor ON measurements(floor);
+        CREATE TABLE IF NOT EXISTS recording_sessions (
+          id TEXT PRIMARY KEY,
+          started_at TEXT NOT NULL,
+          ended_at TEXT,
+          accelerometer_available INTEGER NOT NULL,
+          gyroscope_available INTEGER NOT NULL,
+          barometer_available INTEGER NOT NULL,
+          platform TEXT,
+          device_model TEXT,
+          os_version TEXT,
+          notes TEXT
+        );
+        CREATE TABLE IF NOT EXISTS raw_observations (
+          id TEXT PRIMARY KEY,
+          session_id TEXT,
+          timestamp TEXT NOT NULL,
+          arrival_timestamp TEXT NOT NULL,
+          sensor_timestamp REAL,
+          timestamp_source TEXT NOT NULL,
+          sensor_type TEXT NOT NULL,
+          floor TEXT,
+          activity TEXT,
+          motion_state TEXT,
+          accelerometer_x REAL,
+          accelerometer_y REAL,
+          accelerometer_z REAL,
+          gyroscope_x REAL,
+          gyroscope_y REAL,
+          gyroscope_z REAL,
+          barometer_pressure REAL,
+          ssid TEXT,
+          bssid TEXT,
+          signal_strength REAL,
+          signal_strength_unit TEXT,
+          frequency INTEGER,
+          connection_type TEXT,
+          platform TEXT,
+          device_model TEXT,
+          os_version TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_raw_timestamp ON raw_observations(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_raw_session ON raw_observations(session_id);
+        CREATE INDEX IF NOT EXISTS idx_raw_sensor ON raw_observations(sensor_type);
       `);
+
+      await migrateLegacyWifiIntoRawObservations(db);
 
       // Attempt legacy migration from AsyncStorage
       try {
@@ -66,6 +116,7 @@ async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
           if (Array.isArray(items) && items.length > 0) {
             await insertBatch(db, items);
             await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+            await migrateLegacyWifiIntoRawObservations(db);
           }
         }
       } catch {
@@ -76,6 +127,26 @@ async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
     })();
   }
   return dbPromise;
+}
+
+async function migrateLegacyWifiIntoRawObservations(db: SQLite.SQLiteDatabase) {
+  await db.runAsync(`
+    INSERT OR IGNORE INTO raw_observations (
+      id, session_id, timestamp, arrival_timestamp, sensor_timestamp, timestamp_source, sensor_type,
+      floor, activity, motion_state,
+      accelerometer_x, accelerometer_y, accelerometer_z,
+      gyroscope_x, gyroscope_y, gyroscope_z, barometer_pressure,
+      ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
+      platform, device_model, os_version
+    )
+    SELECT
+      id, NULL, timestamp, timestamp, NULL, 'arrival', 'wifi',
+      floor, NULL, NULL,
+      NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+      ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
+      platform, device_model, os_version
+    FROM measurements
+  `);
 }
 
 async function insertBatch(db: SQLite.SQLiteDatabase, items: Measurement[]) {
@@ -202,46 +273,290 @@ export async function getAllMeasurements(): Promise<Measurement[]> {
 
 export async function clearAllMeasurementsFromDb(): Promise<void> {
   writeBuffer = [];
+  rawWriteBuffer = [];
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
   }
+  if (rawFlushTimer) {
+    clearTimeout(rawFlushTimer);
+    rawFlushTimer = null;
+  }
   const db = await getDatabase();
   await db.runAsync("DELETE FROM measurements");
+  await db.runAsync("DELETE FROM raw_observations");
+  await db.runAsync("DELETE FROM recording_sessions");
 }
 
-const columns: (keyof Measurement)[] = [
-  "id",
-  "timestamp",
-  "floor",
-  "ssid",
-  "bssid",
-  "signalStrength",
-  "signalStrengthUnit",
-  "frequency",
-  "connectionType",
-  "platform",
-  "deviceModel",
-  "osVersion",
-  "signalStrengthNormalized",
-  "signalStrengthEstimatedDbm",
-  "frequencyBand",
-];
+const RAW_FLUSH_SIZE = 80;
+const RAW_FLUSH_MS = 750;
 
-const csvCell = (item: unknown) => `"${String(item ?? "").replaceAll('"', '""')}"`;
+type RawDbRow = {
+  id: string;
+  session_id: string | null;
+  timestamp: string;
+  arrival_timestamp: string;
+  sensor_timestamp: number | null;
+  timestamp_source: "arrival";
+  sensor_type: RawObservation["sensorType"];
+  floor: Floor | null;
+  activity: RawObservation["activity"];
+  motion_state: RawObservation["motionState"];
+  accelerometer_x: number | null;
+  accelerometer_y: number | null;
+  accelerometer_z: number | null;
+  gyroscope_x: number | null;
+  gyroscope_y: number | null;
+  gyroscope_z: number | null;
+  barometer_pressure: number | null;
+  ssid: string | null;
+  bssid: string | null;
+  signal_strength: number | null;
+  signal_strength_unit: "dBm" | null;
+  frequency: number | null;
+  connection_type: "wifi" | null;
+  platform: string;
+  device_model: string | null;
+  os_version: string | null;
+};
+
+function rowToObservation(r: RawDbRow): RawObservation {
+  return {
+    id: r.id,
+    sessionId: r.session_id,
+    timestamp: r.timestamp,
+    arrivalTimestamp: r.arrival_timestamp,
+    sensorTimestamp: r.sensor_timestamp,
+    timestampSource: r.timestamp_source,
+    sensorType: r.sensor_type,
+    floor: r.floor,
+    activity: r.activity,
+    motionState: r.motion_state,
+    accelerometerX: r.accelerometer_x,
+    accelerometerY: r.accelerometer_y,
+    accelerometerZ: r.accelerometer_z,
+    gyroscopeX: r.gyroscope_x,
+    gyroscopeY: r.gyroscope_y,
+    gyroscopeZ: r.gyroscope_z,
+    barometerPressure: r.barometer_pressure,
+    ssid: r.ssid,
+    bssid: r.bssid,
+    signalStrength: r.signal_strength,
+    signalStrengthUnit: r.signal_strength_unit,
+    frequency: r.frequency,
+    connectionType: r.connection_type,
+    platform: r.platform,
+    deviceModel: r.device_model,
+    osVersion: r.os_version,
+  };
+}
+
+async function insertRawBatch(db: SQLite.SQLiteDatabase, items: RawObservation[]) {
+  if (items.length === 0) return;
+
+  await db.withTransactionAsync(async () => {
+    const statement = await db.prepareAsync(
+      `INSERT OR REPLACE INTO raw_observations (
+        id, session_id, timestamp, arrival_timestamp, sensor_timestamp, timestamp_source, sensor_type,
+        floor, activity, motion_state,
+        accelerometer_x, accelerometer_y, accelerometer_z,
+        gyroscope_x, gyroscope_y, gyroscope_z, barometer_pressure,
+        ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
+        platform, device_model, os_version
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    try {
+      for (const item of items) {
+        await statement.executeAsync([
+          item.id,
+          item.sessionId,
+          item.timestamp,
+          item.arrivalTimestamp,
+          item.sensorTimestamp,
+          item.timestampSource,
+          item.sensorType,
+          item.floor,
+          item.activity,
+          item.motionState,
+          item.accelerometerX,
+          item.accelerometerY,
+          item.accelerometerZ,
+          item.gyroscopeX,
+          item.gyroscopeY,
+          item.gyroscopeZ,
+          item.barometerPressure,
+          item.ssid,
+          item.bssid,
+          item.signalStrength,
+          item.signalStrengthUnit,
+          item.frequency,
+          item.connectionType,
+          item.platform,
+          item.deviceModel,
+          item.osVersion,
+        ]);
+      }
+    } finally {
+      await statement.finalizeAsync();
+    }
+  });
+}
+
+export async function flushRawWriteBuffer(): Promise<void> {
+  if (rawFlushTimer) {
+    clearTimeout(rawFlushTimer);
+    rawFlushTimer = null;
+  }
+
+  if (activeRawFlushPromise) {
+    try {
+      await activeRawFlushPromise;
+    } catch {
+      // Ignore previous flush error, proceed to try flushing current buffer
+    }
+  }
+
+  if (rawWriteBuffer.length === 0) return;
+
+  activeRawFlushPromise = (async () => {
+    const itemsToFlush = [...rawWriteBuffer];
+    rawWriteBuffer = [];
+
+    try {
+      const db = await getDatabase();
+      await insertRawBatch(db, itemsToFlush);
+    } catch (error) {
+      rawWriteBuffer = [...itemsToFlush, ...rawWriteBuffer];
+      console.error("Failed to flush raw observations buffer to SQLite:", error);
+    }
+  })();
+
+  try {
+    await activeRawFlushPromise;
+  } finally {
+    activeRawFlushPromise = null;
+  }
+}
+
+export async function saveRawObservationBuffered(item: RawObservation): Promise<void> {
+  rawWriteBuffer.push(item);
+
+  if (rawWriteBuffer.length >= RAW_FLUSH_SIZE) {
+    await flushRawWriteBuffer();
+  } else if (!rawFlushTimer) {
+    rawFlushTimer = setTimeout(() => void flushRawWriteBuffer(), RAW_FLUSH_MS);
+  }
+}
+
+export async function getAllRawObservations(): Promise<RawObservation[]> {
+  await flushWriteBuffer();
+  await flushRawWriteBuffer();
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<RawDbRow>(
+    "SELECT * FROM raw_observations ORDER BY timestamp ASC, id ASC"
+  );
+  return rows.map(rowToObservation);
+}
+
+export async function getRawObservationCount(): Promise<number> {
+  await flushRawWriteBuffer();
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) as count FROM raw_observations"
+  );
+  return row?.count ?? 0;
+}
+
+export async function nextSessionId(): Promise<string> {
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) as count FROM recording_sessions"
+  );
+  const n = (row?.count ?? 0) + 1;
+  return `SESSION_${String(n).padStart(3, "0")}`;
+}
+
+export async function insertRecordingSession(session: RecordingSession): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    `INSERT OR REPLACE INTO recording_sessions (
+      id, started_at, ended_at, accelerometer_available, gyroscope_available, barometer_available,
+      platform, device_model, os_version, notes
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      session.id,
+      session.startedAt,
+      session.endedAt,
+      session.accelerometerAvailable ? 1 : 0,
+      session.gyroscopeAvailable ? 1 : 0,
+      session.barometerAvailable ? 1 : 0,
+      session.platform,
+      session.deviceModel,
+      session.osVersion,
+      session.notes,
+    ]
+  );
+}
+
+export async function endRecordingSession(sessionId: string, endedAt: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync("UPDATE recording_sessions SET ended_at = ? WHERE id = ?", [
+    endedAt,
+    sessionId,
+  ]);
+}
+
+export async function getAllRecordingSessions(): Promise<RecordingSession[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<{
+    id: string;
+    started_at: string;
+    ended_at: string | null;
+    accelerometer_available: number;
+    gyroscope_available: number;
+    barometer_available: number;
+    platform: string;
+    device_model: string | null;
+    os_version: string | null;
+    notes: string | null;
+  }>("SELECT * FROM recording_sessions ORDER BY started_at ASC");
+
+  return rows.map((r) => ({
+    id: r.id,
+    startedAt: r.started_at,
+    endedAt: r.ended_at,
+    accelerometerAvailable: Boolean(r.accelerometer_available),
+    gyroscopeAvailable: Boolean(r.gyroscope_available),
+    barometerAvailable: Boolean(r.barometer_available),
+    platform: r.platform,
+    deviceModel: r.device_model,
+    osVersion: r.os_version,
+    notes: r.notes ?? "",
+  }));
+}
 
 export async function exportDatasetFromDb(format: "csv" | "json"): Promise<void> {
-  const items = await getAllMeasurements();
-  const filename = `wifi-floor-dataset-${new Date().toISOString().replaceAll(":", "-")}.${format}`;
+  const [items, sessions] = await Promise.all([
+    getAllRawObservations(),
+    getAllRecordingSessions(),
+  ]);
+  const filename = `raw-sensor-dataset-${new Date().toISOString().replaceAll(":", "-")}.${format}`;
   const file = new File(Paths.cache, filename);
 
   const contents =
     format === "json"
-      ? JSON.stringify(items, null, 2)
+      ? JSON.stringify(
+          {
+            sessions,
+            observations: items,
+          },
+          null,
+          2
+        )
       : [
-          columns.join(","),
+          RAW_CSV_COLUMNS.join(","),
           ...items.map((item) =>
-            columns.map((key) => csvCell(item[key])).join(",")
+            RAW_CSV_COLUMNS.map((key) => csvCell(item[key])).join(",")
           ),
         ].join("\n");
 
@@ -253,6 +568,6 @@ export async function exportDatasetFromDb(format: "csv" | "json"): Promise<void>
 
   await Sharing.shareAsync(file.uri, {
     mimeType: format === "csv" ? "text/csv" : "application/json",
-    dialogTitle: "Export Wi-Fi floor dataset",
+    dialogTitle: "Export raw sensor dataset",
   });
 }

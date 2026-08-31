@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Accelerometer } from "expo-sensors";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { setCachedMotionState } from "../lib/recordingContext";
 
 export type MotionState = "WALKING" | "STATIONARY";
 export const KEY_LAST_MOTION = "@wifi_logger_last_motion";
@@ -58,7 +59,13 @@ export function useMotionDetector() {
         }
 
         const active = now - lastMotionTimeRef.current < MOTION_HANGOVER_MS;
-        setIsMoving((prev) => (prev === active ? prev : active));
+        setIsMoving((prev) => {
+          if (prev === active) {
+            return prev;
+          }
+          return active;
+        });
+        setCachedMotionState(active ? "WALKING" : "STATIONARY");
       }
     });
 
