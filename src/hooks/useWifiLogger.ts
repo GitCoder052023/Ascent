@@ -52,6 +52,7 @@ import {
   isImuCollectorRunning,
   startImuCollector,
   stopImuCollector,
+  syncNativeRecordingLabels,
 } from "../lib/imuCollector";
 import {
   isIgnoringBatteryOptimizations,
@@ -107,11 +108,13 @@ export function useWifiLogger() {
     setFloorState(next);
     setCachedFloor(next);
     setBackgroundFloor(next);
+    syncNativeRecordingLabels();
   }
 
   function setActivity(next: ActivityLabel | null) {
     setActivityState(next);
     setCachedActivity(next);
+    syncNativeRecordingLabels();
   }
 
   useEffect(() => {

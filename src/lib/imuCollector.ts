@@ -4,7 +4,14 @@ import * as Device from "expo-device";
 import { Platform } from "react-native";
 import {
   acquireCpuWakeLock,
+  isNativeImuAvailable,
+  nativeImuLastSampleAgeMs,
+  probeNativeAvailability,
   releaseCpuWakeLock,
+  startNativeImuRecording,
+  stopNativeImuRecording,
+  subscribeNativeImuLatest,
+  updateNativeImuLabels,
 } from "../../modules/recording-keepalive";
 import { flushRawWriteBuffer, saveRawObservationBuffered } from "./db";
 import {
@@ -35,6 +42,8 @@ const emptyLatest: LatestRaw = {
 
 let startChain: Promise<unknown> = Promise.resolve();
 let running = false;
+let usingNativeImu = false;
+let nativeLatestUnsub: (() => void) | null = null;
 let startGeneration = 0;
 let deviceMeta: DeviceMeta | null = null;
 let subscriptions: { remove: () => void }[] = [];
@@ -46,6 +55,10 @@ let lastWalkAt = 0;
 const latestListeners = new Set<(latest: LatestRaw) => void>();
 
 export async function probeSensorAvailability(): Promise<SensorAvailability> {
+  const native = probeNativeAvailability();
+  if (native) {
+    return native;
+  }
   const [accelerometerAvailable, gyroscopeAvailable, barometerAvailable] =
     await Promise.all([
       Accelerometer.isAvailableAsync().catch(() => false),
@@ -79,6 +92,22 @@ export function subscribeLatestRaw(listener: (latest: LatestRaw) => void): () =>
   return () => {
     latestListeners.delete(listener);
   };
+}
+
+export function syncNativeRecordingLabels(): void {
+  if (!isNativeImuAvailable()) {
+    return;
+  }
+  const labels = getCachedLabels();
+  const device = deviceMeta ?? defaultDevice();
+  updateNativeImuLabels({
+    sessionId: labels.sessionId,
+    floor: labels.floor,
+    activity: labels.activity,
+    motionState: labels.motionState,
+    deviceModel: device.deviceModel,
+    osVersion: device.osVersion,
+  });
 }
 
 function publishLatest(partial: Partial<LatestRaw>) {
@@ -124,6 +153,23 @@ function clearSubscriptions() {
   subscriptions = [];
 }
 
+function ensureNativeLatestSubscription() {
+  if (nativeLatestUnsub) {
+    return;
+  }
+  nativeLatestUnsub = subscribeNativeImuLatest((event) => {
+    lastSampleAt = event.lastSampleAt || Date.now();
+    if (event.motionState === "WALKING" || event.motionState === "STATIONARY") {
+      setCachedMotionState(event.motionState);
+    }
+    publishLatest({
+      accelerometer: event.accelerometer,
+      gyroscope: event.gyroscope,
+      barometer: event.barometer,
+    });
+  });
+}
+
 /**
  * IMU collection is a process singleton so Activity pause/remount (the Android
  * "app closed" flash when the location FGS starts) does not tear down listeners.
@@ -145,6 +191,35 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
   const generation = ++startGeneration;
   running = true;
 
+  const available = await probeSensorAvailability();
+  if (!running || generation !== startGeneration) {
+    return available;
+  }
+
+  latestLocal = { ...emptyLatest };
+  lastUi = 0;
+  lastSampleAt = Date.now();
+
+  if (isNativeImuAvailable()) {
+    const labels = getCachedLabels();
+    const started = await startNativeImuRecording({
+      sessionId: labels.sessionId,
+      floor: labels.floor,
+      activity: labels.activity,
+      motionState: labels.motionState,
+      deviceModel: device.deviceModel,
+      osVersion: device.osVersion,
+    });
+    if (started) {
+      usingNativeImu = true;
+      clearSubscriptions();
+      ensureNativeLatestSubscription();
+      return available;
+    }
+  }
+
+  usingNativeImu = false;
+
   if (Platform.OS === "android") {
     acquireCpuWakeLock();
   } else {
@@ -155,15 +230,7 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
     }
   }
 
-  const available = await probeSensorAvailability();
-  if (!running || generation !== startGeneration) {
-    return available;
-  }
-
   clearSubscriptions();
-  latestLocal = { ...emptyLatest };
-  lastUi = 0;
-  lastSampleAt = Date.now();
 
   attachSensor(available.accelerometerAvailable, () => {
     Accelerometer.setUpdateInterval(ACCEL_REQUESTED_INTERVAL_MS);
@@ -271,6 +338,15 @@ export async function ensureImuCollectorAlive(): Promise<void> {
   }
 
   const device = deviceMeta ?? defaultDevice();
+  if (usingNativeImu || isNativeImuAvailable()) {
+    if (nativeImuLastSampleAgeMs() > 1500) {
+      await startImuCollector(device);
+    } else {
+      syncNativeRecordingLabels();
+    }
+    return;
+  }
+
   if (!running) {
     await startImuCollector(device);
     return;
@@ -283,10 +359,18 @@ export async function ensureImuCollectorAlive(): Promise<void> {
 
 export async function stopImuCollector(): Promise<void> {
   running = false;
+  usingNativeImu = false;
   startGeneration += 1;
   clearSubscriptions();
+  nativeLatestUnsub?.();
+  nativeLatestUnsub = null;
   try {
     Accelerometer.setUpdateInterval(MOTION_DETECTOR_INTERVAL_MS);
+  } catch {
+    // Ignore.
+  }
+  try {
+    await stopNativeImuRecording();
   } catch {
     // Ignore.
   }

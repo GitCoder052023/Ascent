@@ -1,20 +1,66 @@
 import { Platform } from "react-native";
-import { requireOptionalNativeModule } from "expo";
+import { requireOptionalNativeModule, type EventSubscription } from "expo";
+
+export type NativeLatestEvent = {
+  accelerometer: string | null;
+  gyroscope: string | null;
+  barometer: string | null;
+  motionState: string;
+  lastSampleAt: number;
+};
+
+export type NativeRecordingOptions = {
+  sessionId?: string | null;
+  floor?: string | null;
+  activity?: string | null;
+  motionState?: string | null;
+  deviceModel?: string | null;
+  osVersion?: string | null;
+};
 
 type RecordingKeepaliveNative = {
   acquire: () => boolean;
   release: () => boolean;
   isHeld: () => boolean;
+  isRecording: () => boolean;
+  lastSampleAgeMs: () => number;
   isIgnoringBatteryOptimizations: () => boolean;
   requestIgnoreBatteryOptimizations: () => Promise<boolean>;
+  probeAvailability: () => {
+    accelerometerAvailable: boolean;
+    gyroscopeAvailable: boolean;
+    barometerAvailable: boolean;
+  };
+  startRecording: (options: Record<string, string | null | undefined>) => Promise<boolean>;
+  updateLabels: (options: Record<string, string | null | undefined>) => boolean;
+  stopRecording: () => Promise<boolean>;
+  addListener: (
+    event: "onLatest",
+    listener: (event: NativeLatestEvent) => void
+  ) => EventSubscription;
 };
 
 const native = requireOptionalNativeModule<RecordingKeepaliveNative>(
   "RecordingKeepalive"
 );
 
+function compactOptions(options: NativeRecordingOptions): Record<string, string | null | undefined> {
+  return {
+    sessionId: options.sessionId ?? "",
+    floor: options.floor ?? "",
+    activity: options.activity ?? "",
+    motionState: options.motionState ?? "",
+    deviceModel: options.deviceModel ?? "",
+    osVersion: options.osVersion ?? "",
+  };
+}
+
+export function isNativeImuAvailable(): boolean {
+  return Platform.OS === "android" && native != null;
+}
+
 export function acquireCpuWakeLock(): boolean {
-  if (Platform.OS !== "android" || !native) {
+  if (!isNativeImuAvailable() || !native) {
     return false;
   }
   try {
@@ -25,7 +71,7 @@ export function acquireCpuWakeLock(): boolean {
 }
 
 export function releaseCpuWakeLock(): boolean {
-  if (Platform.OS !== "android" || !native) {
+  if (!isNativeImuAvailable() || !native) {
     return false;
   }
   try {
@@ -36,7 +82,7 @@ export function releaseCpuWakeLock(): boolean {
 }
 
 export function isCpuWakeLockHeld(): boolean {
-  if (Platform.OS !== "android" || !native) {
+  if (!isNativeImuAvailable() || !native) {
     return false;
   }
   try {
@@ -46,8 +92,30 @@ export function isCpuWakeLockHeld(): boolean {
   }
 }
 
+export function isNativeImuRecording(): boolean {
+  if (!isNativeImuAvailable() || !native) {
+    return false;
+  }
+  try {
+    return native.isRecording();
+  } catch {
+    return false;
+  }
+}
+
+export function nativeImuLastSampleAgeMs(): number {
+  if (!isNativeImuAvailable() || !native) {
+    return Number.POSITIVE_INFINITY;
+  }
+  try {
+    return native.lastSampleAgeMs();
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
 export function isIgnoringBatteryOptimizations(): boolean {
-  if (Platform.OS !== "android" || !native) {
+  if (!isNativeImuAvailable() || !native) {
     return true;
   }
   try {
@@ -58,12 +126,76 @@ export function isIgnoringBatteryOptimizations(): boolean {
 }
 
 export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
-  if (Platform.OS !== "android" || !native) {
+  if (!isNativeImuAvailable() || !native) {
     return true;
   }
   try {
     return await native.requestIgnoreBatteryOptimizations();
   } catch {
     return false;
+  }
+}
+
+export function probeNativeAvailability(): {
+  accelerometerAvailable: boolean;
+  gyroscopeAvailable: boolean;
+  barometerAvailable: boolean;
+} | null {
+  if (!isNativeImuAvailable() || !native) {
+    return null;
+  }
+  try {
+    return native.probeAvailability();
+  } catch {
+    return null;
+  }
+}
+
+export async function startNativeImuRecording(
+  options: NativeRecordingOptions
+): Promise<boolean> {
+  if (!isNativeImuAvailable() || !native) {
+    return false;
+  }
+  try {
+    return await native.startRecording(compactOptions(options));
+  } catch {
+    return false;
+  }
+}
+
+export function updateNativeImuLabels(options: NativeRecordingOptions): boolean {
+  if (!isNativeImuAvailable() || !native) {
+    return false;
+  }
+  try {
+    return native.updateLabels(compactOptions(options));
+  } catch {
+    return false;
+  }
+}
+
+export async function stopNativeImuRecording(): Promise<boolean> {
+  if (!isNativeImuAvailable() || !native) {
+    return false;
+  }
+  try {
+    return await native.stopRecording();
+  } catch {
+    return false;
+  }
+}
+
+export function subscribeNativeImuLatest(
+  listener: (event: NativeLatestEvent) => void
+): () => void {
+  if (!isNativeImuAvailable() || !native) {
+    return () => {};
+  }
+  try {
+    const sub = native.addListener("onLatest", listener);
+    return () => sub.remove();
+  } catch {
+    return () => {};
   }
 }

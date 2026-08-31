@@ -464,13 +464,11 @@ export async function getAllRawObservations(): Promise<RawObservation[]> {
 }
 
 export async function getRawObservationCount(): Promise<number> {
-  if (cachedRawDbCount === null) {
-    const db = await getDatabase();
-    const row = await db.getFirstAsync<{ count: number }>(
-      "SELECT COUNT(*) as count FROM raw_observations"
-    );
-    cachedRawDbCount = row?.count ?? 0;
-  }
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) as count FROM raw_observations"
+  );
+  cachedRawDbCount = row?.count ?? 0;
   return cachedRawDbCount + rawWriteBuffer.length;
 }
 
