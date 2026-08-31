@@ -22,7 +22,8 @@ export default function Index() {
     <ScrollView style={styles.screen} contentContainerStyle={styles.content}>
       <View style={styles.hero}>
         <Text style={styles.eyebrow}>GYM EXPERIMENT</Text>
-        <Text style={styles.title}>Raw Sensor{"\n"}Dataset Logger</Text>
+        <Text style={styles.title}>Ascent</Text>
+        <Text style={styles.sub}>Raw sensor dataset logger</Text>
       </View>
 
       <View style={styles.status}>

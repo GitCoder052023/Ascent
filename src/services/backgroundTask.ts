@@ -131,7 +131,7 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
       activityType: Location.ActivityType.Fitness,
       mayShowUserSettingsDialog: false,
       foregroundService: {
-        notificationTitle: "Raw sensor logger active",
+        notificationTitle: "Ascent is recording",
         notificationBody: "Recording raw observations. IMU continues only while the OS keeps the app alive.",
         killServiceOnDestroy: false,
       },

@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "WifiLogger",
+    "name": "Ascent",
     "slug": "WifiLogger",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -16,8 +16,8 @@
         "UIBackgroundModes": [
           "location"
         ],
-        "NSLocationWhenInUseUsageDescription": "WifiLogger needs location permission to access connected Wi-Fi SSID and signal metrics.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "WifiLogger needs background location access to map Wi-Fi signal strength continuously while moving across floors."
+        "NSLocationWhenInUseUsageDescription": "Ascent needs location permission to access connected Wi-Fi SSID and signal metrics.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Ascent needs background location access to map Wi-Fi signal strength continuously while moving across floors."
       }
     },
     "android": {
@@ -53,13 +53,13 @@
       [
         "expo-sensors",
         {
-          "motionPermission": "WifiLogger records raw accelerometer, gyroscope, and barometer measurements for gym movement research."
+          "motionPermission": "Ascent records raw accelerometer, gyroscope, and barometer measurements for gym movement research."
         }
       ],
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "WifiLogger needs location access to map Wi-Fi signal strength in background.",
+          "locationAlwaysAndWhenInUsePermission": "Ascent needs location access to map Wi-Fi signal strength in background.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,
           "isIosBackgroundLocationEnabled": true
