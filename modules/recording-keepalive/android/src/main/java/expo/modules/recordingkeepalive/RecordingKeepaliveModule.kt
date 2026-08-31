@@ -114,15 +114,10 @@ class RecordingKeepaliveModule : Module() {
 
     Function("updateLabels") { options: Map<String, Any?> ->
       val ctx = appContext.reactContext ?: return@Function false
-      val mapped = options.mapValues { (_, value) -> value as? String }
-      RecordingImuService.update(ctx.applicationContext) {
-        putString(RecordingImuService.EXTRA_SESSION_ID, mapped["sessionId"])
-        putString(RecordingImuService.EXTRA_FLOOR, mapped["floor"])
-        putString(RecordingImuService.EXTRA_ACTIVITY, mapped["activity"])
-        putString(RecordingImuService.EXTRA_MOTION, mapped["motionState"])
-        putString(RecordingImuService.EXTRA_DEVICE_MODEL, mapped["deviceModel"])
-        putString(RecordingImuService.EXTRA_OS_VERSION, mapped["osVersion"])
-      }
+      RecordingImuService.update(
+        ctx.applicationContext,
+        options.mapValues { (_, value) -> value as? String }
+      )
       true
     }
 
@@ -133,14 +128,7 @@ class RecordingKeepaliveModule : Module() {
 
   private fun startImu(options: Map<String, String?>): Boolean {
     val ctx = appContext.reactContext ?: appContext.currentActivity ?: return false
-    RecordingImuService.start(ctx.applicationContext) {
-      putString(RecordingImuService.EXTRA_SESSION_ID, options["sessionId"])
-      putString(RecordingImuService.EXTRA_FLOOR, options["floor"])
-      putString(RecordingImuService.EXTRA_ACTIVITY, options["activity"])
-      putString(RecordingImuService.EXTRA_MOTION, options["motionState"])
-      putString(RecordingImuService.EXTRA_DEVICE_MODEL, options["deviceModel"])
-      putString(RecordingImuService.EXTRA_OS_VERSION, options["osVersion"])
-    }
+    RecordingImuService.start(ctx.applicationContext, options)
     return true
   }
 

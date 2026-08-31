@@ -284,8 +284,8 @@ class RecordingImuService : Service(), SensorEventListener {
       private set
     @Volatile var lastSampleAtElapsed = 0L
 
-    fun start(context: Context, extras: Intent.() -> Unit) {
-      val intent = Intent(context, RecordingImuService::class.java).apply(extras)
+    fun start(context: Context, options: Map<String, String?>) {
+      val intent = labeledIntent(context, options)
       if (running) {
         context.startService(intent)
         return
@@ -297,11 +297,11 @@ class RecordingImuService : Service(), SensorEventListener {
       }
     }
 
-    fun update(context: Context, extras: Intent.() -> Unit) {
+    fun update(context: Context, options: Map<String, String?>) {
       if (!running) {
         return
       }
-      context.startService(Intent(context, RecordingImuService::class.java).apply(extras))
+      context.startService(labeledIntent(context, options))
     }
 
     fun stop(context: Context) {
@@ -316,6 +316,16 @@ class RecordingImuService : Service(), SensorEventListener {
         "gyroscopeAvailable" to (sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null),
         "barometerAvailable" to (sm.getDefaultSensor(Sensor.TYPE_PRESSURE) != null),
       )
+    }
+
+    private fun labeledIntent(context: Context, options: Map<String, String?>): Intent {
+      return Intent(context, RecordingImuService::class.java)
+        .putExtra(EXTRA_SESSION_ID, options["sessionId"])
+        .putExtra(EXTRA_FLOOR, options["floor"])
+        .putExtra(EXTRA_ACTIVITY, options["activity"])
+        .putExtra(EXTRA_MOTION, options["motionState"])
+        .putExtra(EXTRA_DEVICE_MODEL, options["deviceModel"])
+        .putExtra(EXTRA_OS_VERSION, options["osVersion"])
     }
   }
 }
