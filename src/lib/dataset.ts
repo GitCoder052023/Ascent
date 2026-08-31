@@ -7,11 +7,15 @@ import {
   exportDatasetFromDb,
   getAllMeasurements,
   saveMeasurementBuffered,
+  saveRawObservationBuffered,
   type Floor,
   type Measurement,
 } from "./db";
+import { createWifiObservation, type DeviceMeta, type LabelContext } from "./rawObservation";
+import { getCachedLabels } from "./recordingContext";
+import type { ActivityLabel } from "./rawTypes";
 
-export type { Floor, Measurement };
+export type { Floor, Measurement, ActivityLabel };
 
 export const loadMeasurements = async (): Promise<Measurement[]> => {
   return await getAllMeasurements();
@@ -20,7 +24,7 @@ export const loadMeasurements = async (): Promise<Measurement[]> => {
 export const saveMeasurements = async (items: Measurement[]): Promise<void> => {
   if (items.length > 0) {
     const lastItem = items[items.length - 1];
-    await saveMeasurementBuffered(lastItem);
+    await persistWifiMeasurement(lastItem);
   }
 };
 
@@ -33,7 +37,7 @@ export function createMeasurement(
   wifi: WifiSnapshot,
   processedSignal?: ProcessedSignal
 ): Measurement {
-  return {
+  const item: Measurement = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     timestamp: new Date().toISOString(),
     floor,
@@ -50,6 +54,38 @@ export function createMeasurement(
     signalStrengthEstimatedDbm: processedSignal?.estimatedDbm ?? null,
     frequencyBand: processedSignal?.frequencyBand ?? null,
   };
+  return item;
+}
+
+export async function persistWifiMeasurement(
+  item: Measurement,
+  labelsOverride?: Partial<LabelContext>
+): Promise<void> {
+  const labels = { ...getCachedLabels(), ...labelsOverride };
+  const device: DeviceMeta = {
+    platform: item.platform,
+    deviceModel: item.deviceModel,
+    osVersion: item.osVersion,
+  };
+  const raw = createWifiObservation(
+    Date.parse(item.timestamp) || Date.now(),
+    {
+      ssid: item.ssid,
+      bssid: item.bssid,
+      signalStrength: item.signalStrength,
+      signalStrengthUnit: item.signalStrengthUnit,
+      frequency: item.frequency,
+    },
+    {
+      sessionId: labels.sessionId,
+      floor: item.floor,
+      activity: labels.activity,
+      motionState: labels.motionState,
+    },
+    device,
+    item.id
+  );
+  await Promise.all([saveMeasurementBuffered(item), saveRawObservationBuffered(raw)]);
 }
 
 export async function exportDataset(

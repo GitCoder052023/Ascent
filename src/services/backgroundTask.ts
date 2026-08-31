@@ -3,13 +3,17 @@ import * as Location from "expo-location";
 import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
-import { saveMeasurementBuffered, flushWriteBuffer, Floor } from "../lib/db";
-import { createMeasurement } from "../lib/dataset";
-
+import { flushRawWriteBuffer, flushWriteBuffer, Floor } from "../lib/db";
+import { createMeasurement, persistWifiMeasurement } from "../lib/dataset";
 import { KEY_LAST_MOTION } from "../hooks/useMotionDetector";
+import {
+  hydrateLabelsFromStorage,
+  KEY_ACTIVE_FLOOR,
+  setCachedFloor,
+} from "../lib/recordingContext";
 
 export const WIFI_LOGGER_BACKGROUND_TASK = "wifi-logger-background-task";
-export const KEY_ACTIVE_FLOOR = "@wifi_logger_active_floor";
+export { KEY_ACTIVE_FLOOR };
 
 const MIN_BACKGROUND_SAMPLE_MS = 3000;
 
@@ -19,7 +23,7 @@ let sampleInFlight = false;
 
 export function setBackgroundFloor(floor: Floor) {
   activeFloor = floor;
-  void AsyncStorage.setItem(KEY_ACTIVE_FLOOR, floor).catch(() => {});
+  setCachedFloor(floor);
 }
 
 TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
@@ -68,13 +72,22 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
       }
     }
 
-    const storedFloor = (await AsyncStorage.getItem(KEY_ACTIVE_FLOOR)) as Floor | null;
-    const currentFloor = storedFloor === "FLOOR_1" || storedFloor === "FLOOR_2" ? storedFloor : activeFloor;
+    const labels = await hydrateLabelsFromStorage();
+    const currentFloor =
+      labels.floor === "GROUND_FLOOR" || labels.floor === "FLOOR_1" || labels.floor === "FLOOR_2"
+        ? labels.floor
+        : activeFloor;
 
     const processed = processWifiSignal(wifi, isMoving);
 
     const item = createMeasurement(currentFloor, wifi, processed);
-    await saveMeasurementBuffered(item);
+    await persistWifiMeasurement(item, {
+      sessionId: labels.sessionId,
+      activity: labels.activity,
+      motionState: isMoving ? "WALKING" : labels.motionState,
+    });
+    await flushWriteBuffer();
+    await flushRawWriteBuffer();
   } catch (err) {
     console.error("Failed background sample tick:", err);
   } finally {
@@ -118,8 +131,8 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
       activityType: Location.ActivityType.Fitness,
       mayShowUserSettingsDialog: false,
       foregroundService: {
-        notificationTitle: "Wi-Fi Logger Active",
-        notificationBody: "Sampling connected Wi-Fi in the background",
+        notificationTitle: "Ascent is recording",
+        notificationBody: "Recording raw observations. IMU continues only while the OS keeps the app alive.",
         killServiceOnDestroy: false,
       },
     });
@@ -141,6 +154,7 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
 export async function stopBackgroundLoggingAsync(): Promise<void> {
   try {
     await flushWriteBuffer();
+    await flushRawWriteBuffer();
     const isRegistered =
       await TaskManager.isTaskRegisteredAsync(WIFI_LOGGER_BACKGROUND_TASK);
     if (isRegistered) {
