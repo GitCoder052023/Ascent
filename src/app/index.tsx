@@ -159,7 +159,7 @@ export default function Index() {
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
-        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. Keep the recording notification visible when the screen is off. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
+        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. Keep the recording notification visible. On Android, allow unrestricted battery when prompted, and lock the app in Recents on aggressive OEMs. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
       </Text>
     </ScrollView>
   );

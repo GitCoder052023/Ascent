@@ -53,6 +53,10 @@ import {
   startImuCollector,
   stopImuCollector,
 } from "../lib/imuCollector";
+import {
+  isIgnoringBatteryOptimizations,
+  requestIgnoreBatteryOptimizations,
+} from "../../modules/recording-keepalive";
 
 const KEY_STARTED = "@wifi_logger_started";
 const KEY_NETWORK = "@wifi_logger_network";
@@ -294,7 +298,37 @@ export function useWifiLogger() {
       }
     }
     await requestMotionPermissions();
+
+    if (
+      Platform.OS === "android" &&
+      typeof Platform.Version === "number" &&
+      Platform.Version >= 29
+    ) {
+      const activityRecognition = PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION;
+      if (activityRecognition) {
+        await PermissionsAndroid.request(activityRecognition).catch(() => null);
+      }
+    }
     return true;
+  }
+
+  function promptUnrestrictedBattery() {
+    if (Platform.OS !== "android" || isIgnoringBatteryOptimizations()) {
+      return;
+    }
+    Alert.alert(
+      "Allow unrestricted battery",
+      "Android will suspend sensors when the screen is off unless this app is exempt from battery optimization. This is required for continuous IMU collection.",
+      [
+        { text: "Later", style: "cancel" },
+        {
+          text: "Allow",
+          onPress: () => {
+            void requestIgnoreBatteryOptimizations();
+          },
+        },
+      ]
+    );
   }
 
   async function sample() {
@@ -379,6 +413,7 @@ export function useWifiLogger() {
     }
 
     await startImuCollector(DEVICE_META);
+    promptUnrestrictedBattery();
 
     let backgroundNotice: string | null = null;
     try {

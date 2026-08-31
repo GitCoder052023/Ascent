@@ -8,6 +8,9 @@
       ],
       "@/assets/*": [
         "./assets/*"
+      ],
+      "recording-keepalive": [
+        "./modules/recording-keepalive/index.ts"
       ]
     }
   },

@@ -37,7 +37,10 @@
         "android.permission.FOREGROUND_SERVICE",
         "android.permission.FOREGROUND_SERVICE_LOCATION",
         "android.permission.POST_NOTIFICATIONS",
-        "android.permission.WAKE_LOCK"
+        "android.permission.WAKE_LOCK",
+        "android.permission.HIGH_SAMPLING_RATE_SENSORS",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+        "android.permission.ACTIVITY_RECOGNITION"
       ],
       "package": "com.hamdan_khubaib.Ascent"
     },

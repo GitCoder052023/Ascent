@@ -1,6 +1,6 @@
 import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
-import { AppState, Platform } from "react-native";
+import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
 import { flushRawWriteBuffer, flushWriteBuffer, Floor } from "../lib/db";
@@ -50,10 +50,7 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
 
   try {
     const labels = await hydrateLabelsFromStorage();
-    // Only attempt IMU collector revival if the UI/Activity is currently active
-    if (AppState.currentState === "active") {
-      await ensureImuCollectorAlive().catch(() => {});
-    }
+    await ensureImuCollectorAlive().catch(() => {});
 
     const wifi = await getConnectedWifi();
     if (wifi.connectionState !== "CONNECTED" || !wifi.ssid) {

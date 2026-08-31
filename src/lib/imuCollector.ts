@@ -2,6 +2,10 @@ import { Accelerometer, Barometer, Gyroscope } from "expo-sensors";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
+import {
+  acquireCpuWakeLock,
+  releaseCpuWakeLock,
+} from "../../modules/recording-keepalive";
 import { flushRawWriteBuffer, saveRawObservationBuffered } from "./db";
 import {
   createAccelerometerObservation,
@@ -141,12 +145,13 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
   const generation = ++startGeneration;
   running = true;
 
-  if (Platform.OS !== "android") {
+  if (Platform.OS === "android") {
+    acquireCpuWakeLock();
+  } else {
     try {
       await activateKeepAwakeAsync("raw-sensor-collector");
     } catch {
-      // Keep-awake is optional. On Android it fights lock-screen / FGS and can
-      // take the Activity down while the recording service stays alive.
+      // Keep-awake is optional.
     }
   }
 
@@ -282,6 +287,11 @@ export async function stopImuCollector(): Promise<void> {
   clearSubscriptions();
   try {
     Accelerometer.setUpdateInterval(MOTION_DETECTOR_INTERVAL_MS);
+  } catch {
+    // Ignore.
+  }
+  try {
+    releaseCpuWakeLock();
   } catch {
     // Ignore.
   }
