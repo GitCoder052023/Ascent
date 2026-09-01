@@ -194,7 +194,7 @@ function SensorStatus({ logger }: { logger: ReturnType<typeof useWifiLogger> }) 
       <InfoRow label="Last gyro row" value={logger.latestRaw.gyroscope} />
       <InfoRow label="Last pressure row" value={logger.latestRaw.barometer} />
       <InfoRow label="Last Wi-Fi row" value={logger.latestRaw.wifi} />
-      <InfoRow label="Wi-Fi samples" value={logger.items.length} />
+      <InfoRow label="Wi-Fi samples" value={logger.wifiCount} />
     </Section>
   );
 }
@@ -266,7 +266,7 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
 }
 
 function DatasetActions({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
-  const disabled = logger.rawCount === 0 && !logger.items.length;
+  const disabled = (logger.rawCount === 0 && logger.wifiCount === 0) || logger.recording;
 
   return (
     <>

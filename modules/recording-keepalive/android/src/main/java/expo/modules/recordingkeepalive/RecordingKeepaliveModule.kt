@@ -127,6 +127,11 @@ class RecordingKeepaliveModule : Module() {
       if (count != null && count >= 0L) count else 0L
     }
 
+    Function("wifiCount") {
+      val count = RecordingImuService.activeWriter?.wifiCount()
+      if (count != null && count >= 0L) count else 0L
+    }
+
     AsyncFunction("flushWrites") {
       RecordingImuService.activeWriter?.let { writer ->
         writer.flushBlocking()

@@ -48,6 +48,7 @@ type RecordingKeepaliveNative = {
   updateLabels: (options: Record<string, string | null | undefined>) => boolean;
   stopRecording: () => Promise<boolean>;
   rawCount: () => number;
+  wifiCount: () => number;
   presence: () => {
     appState: string;
     lockScreen: string;
@@ -227,6 +228,18 @@ export function nativeRawObservationCount(): number | null {
   }
   try {
     const count = native.rawCount();
+    return typeof count === "number" && count >= 0 ? count : null;
+  } catch {
+    return null;
+  }
+}
+
+export function nativeWifiObservationCount(): number | null {
+  if (!isNativeImuAvailable() || !native) {
+    return null;
+  }
+  try {
+    const count = native.wifiCount();
     return typeof count === "number" && count >= 0 ? count : null;
   } catch {
     return null;

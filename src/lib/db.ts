@@ -3,6 +3,7 @@ import {
   flushNativeImuWrites,
   isNativeImuRecording,
   nativeRawObservationCount,
+  nativeWifiObservationCount,
 } from "../../modules/recording-keepalive";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { File, Paths } from "expo-file-system";
@@ -347,6 +348,7 @@ export async function clearAllMeasurementsFromDb(): Promise<void> {
   writeBuffer = [];
   rawWriteBuffer = [];
   cachedRawDbCount = 0;
+  cachedWifiDbCount = 0;
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
@@ -364,6 +366,7 @@ export async function clearAllMeasurementsFromDb(): Promise<void> {
 const RAW_FLUSH_SIZE = 200;
 const RAW_FLUSH_MS = 2000;
 let cachedRawDbCount: number | null = null;
+let cachedWifiDbCount: number | null = null;
 
 type RawDbRow = {
   id: string;
@@ -550,7 +553,6 @@ export async function getRawObservationCount(): Promise<number> {
   if (nativeOwnsDatabase || isNativeImuRecording()) {
     if (nativeCount != null && nativeCount >= 0) {
       cachedRawDbCount = Math.max(cachedRawDbCount ?? 0, nativeCount);
-      return nativeCount + rawWriteBuffer.length;
     }
     return (cachedRawDbCount ?? 0) + rawWriteBuffer.length;
   }
@@ -560,7 +562,24 @@ export async function getRawObservationCount(): Promise<number> {
   );
   const jsCount = row?.count ?? 0;
   cachedRawDbCount = Math.max(jsCount, nativeCount ?? 0);
-  return cachedRawDbCount + rawWriteBuffer.length;
+  return (cachedRawDbCount ?? 0) + rawWriteBuffer.length;
+}
+
+export async function getWifiMeasurementCount(): Promise<number> {
+  const nativeCount = nativeWifiObservationCount();
+  if (nativeOwnsDatabase || isNativeImuRecording()) {
+    if (nativeCount != null && nativeCount >= 0) {
+      cachedWifiDbCount = Math.max(cachedWifiDbCount ?? 0, nativeCount);
+    }
+    return (cachedWifiDbCount ?? 0) + writeBuffer.length;
+  }
+  const db = await getDatabase();
+  const row = await db.getFirstAsync<{ count: number }>(
+    "SELECT COUNT(*) as count FROM measurements"
+  );
+  const jsCount = row?.count ?? 0;
+  cachedWifiDbCount = Math.max(jsCount, nativeCount ?? 0);
+  return (cachedWifiDbCount ?? 0) + writeBuffer.length;
 }
 
 export async function nextSessionId(): Promise<string> {

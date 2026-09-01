@@ -31,6 +31,7 @@ import {
   flushRawWriteBuffer,
   flushWriteBuffer,
   getRawObservationCount,
+  getWifiMeasurementCount,
   insertRecordingSession,
   nextSessionId,
 } from "../lib/db";
@@ -84,6 +85,7 @@ export function useWifiLogger() {
   const [wifi, setWifi] = useState<WifiSnapshot>(EMPTY_WIFI);
   const [items, setItems] = useState<Measurement[]>([]);
   const [rawCount, setRawCount] = useState(0);
+  const [wifiCount, setWifiCount] = useState(0);
   const [recording, setRecording] = useState(false);
   const [nativeCapture, setNativeCapture] = useState(false);
   const [started, setStarted] = useState<number | null>(null);
@@ -150,6 +152,7 @@ export function useWifiLogger() {
         setNotice("Could not load the saved dataset.");
       }
       void getRawObservationCount().then(setRawCount).catch(() => {});
+      void getWifiMeasurementCount().then(setWifiCount).catch(() => {});
       void refresh();
       await restoreRecordingIfNeeded();
       setHydrated(true);
@@ -168,6 +171,7 @@ export function useWifiLogger() {
           void loadMeasurements().then(setItems).catch(() => {});
         }
         void getRawObservationCount().then(setRawCount);
+        void getWifiMeasurementCount().then(setWifiCount);
         void restoreRecordingIfNeeded();
       }
     });
@@ -178,6 +182,7 @@ export function useWifiLogger() {
   useEffect(() => {
     const clock = setInterval(() => {
       void getRawObservationCount().then(setRawCount).catch(() => {});
+      void getWifiMeasurementCount().then(setWifiCount).catch(() => {});
       setPresence(getDevicePresence());
     }, 1000);
     return () => clearInterval(clock);
@@ -278,16 +283,6 @@ export function useWifiLogger() {
       }
     });
   }, [network]);
-
-  useEffect(() => {
-    if (!recording || !nativeCapture) {
-      return;
-    }
-    const clock = setInterval(() => {
-      void getRawObservationCount().then(setRawCount).catch(() => {});
-    }, 1000);
-    return () => clearInterval(clock);
-  }, [recording, nativeCapture]);
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
@@ -633,6 +628,8 @@ export function useWifiLogger() {
     }
     const count = await getRawObservationCount().catch(() => rawCount);
     setRawCount(count);
+    const wCount = await getWifiMeasurementCount().catch(() => items.length);
+    setWifiCount(wCount);
     setNotice("Recording stopped. Your dataset remains stored on this device.");
   }
 
@@ -652,7 +649,7 @@ export function useWifiLogger() {
   function clear() {
     Alert.alert(
       "Clear dataset?",
-      `This permanently removes ${rawCount} raw observations and ${items.length} Wi-Fi measurements.`,
+      `This permanently removes ${rawCount} raw observations and ${wifiCount || items.length} Wi-Fi measurements.`,
       [
         { text: "Cancel", style: "cancel" },
         {
@@ -662,6 +659,7 @@ export function useWifiLogger() {
             void clearMeasurements();
             setItems([]);
             setRawCount(0);
+            setWifiCount(0);
           },
         },
       ]
@@ -694,5 +692,6 @@ export function useWifiLogger() {
     start,
     stop,
     wifi,
+    wifiCount,
   };
 }

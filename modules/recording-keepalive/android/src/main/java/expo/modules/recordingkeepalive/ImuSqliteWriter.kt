@@ -43,6 +43,8 @@ internal class ImuSqliteWriter(context: Context) {
   private val dbFile = File(File(context.filesDir, "SQLite"), DB_NAME)
   private val queue = ConcurrentLinkedQueue<ImuSample>()
   private val seq = AtomicLong(0)
+  private val totalRawCount = AtomicLong(0)
+  private val totalWifiCount = AtomicLong(0)
   private val isoLock = Any()
   private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
     timeZone = TimeZone.getTimeZone("UTC")
@@ -74,6 +76,18 @@ internal class ImuSqliteWriter(context: Context) {
       migratePresenceColumns(opened)
       insertRaw = opened.compileStatement(INSERT_RAW)
       insertMeasurement = opened.compileStatement(INSERT_MEASUREMENT)
+      val initialRaw = try {
+        opened.compileStatement("SELECT COUNT(*) FROM raw_observations").use { it.simpleQueryForLong() }
+      } catch (_: Exception) {
+        0L
+      }
+      val initialWifi = try {
+        opened.compileStatement("SELECT COUNT(*) FROM measurements").use { it.simpleQueryForLong() }
+      } catch (_: Exception) {
+        0L
+      }
+      totalRawCount.set(initialRaw)
+      totalWifiCount.set(initialWifi)
       db = opened
 
       val writer = HandlerThread("ascent-imu-db").also { it.start() }
@@ -87,6 +101,10 @@ internal class ImuSqliteWriter(context: Context) {
   }
 
   fun enqueue(sample: ImuSample) {
+    totalRawCount.incrementAndGet()
+    if (sample.sensorType == "wifi") {
+      totalWifiCount.incrementAndGet()
+    }
     queue.add(sample)
     if (queue.size >= FLUSH_SIZE) {
       handler?.post(flushRunnable)
@@ -112,16 +130,11 @@ internal class ImuSqliteWriter(context: Context) {
   }
 
   fun observationCount(): Long {
-    val queued = queue.size.toLong()
-    val database = db ?: return queued
-    val flushed = try {
-      database.rawQuery("SELECT COUNT(*) FROM raw_observations", null).use { cursor ->
-        if (cursor.moveToFirst()) cursor.getLong(0) else 0L
-      }
-    } catch (_: Exception) {
-      return queued
-    }
-    return flushed + queued
+    return totalRawCount.get()
+  }
+
+  fun wifiCount(): Long {
+    return totalWifiCount.get()
   }
 
   fun checkpoint(mode: String = "PASSIVE") {
