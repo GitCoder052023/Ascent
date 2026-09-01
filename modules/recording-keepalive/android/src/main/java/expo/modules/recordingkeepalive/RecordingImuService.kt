@@ -420,7 +420,7 @@ class RecordingImuService : Service(), SensorEventListener {
     @Volatile var writerReady = false
       private set
     @Volatile var lastSampleAtElapsed = 0L
-    @Volatile var activeWriter: ImuSqliteWriter? = null
+    @Volatile internal var activeWriter: ImuSqliteWriter? = null
     private val startLatch = AtomicReference<CountDownLatch?>(null)
 
     fun start(context: Context, options: Map<String, String?>): Boolean {
