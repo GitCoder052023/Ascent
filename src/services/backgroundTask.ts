@@ -1,6 +1,5 @@
 import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
-import { Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
 import { flushRawWriteBuffer, flushWriteBuffer, Floor } from "../lib/db";
@@ -84,7 +83,7 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
         ? labels.floor
         : activeFloor;
 
-    const processed = processWifiSignal(wifi, isMoving);
+    const processed = processWifiSignal(wifi);
     const item = createMeasurement(currentFloor, wifi, processed);
     await persistWifiMeasurement(item, {
       sessionId: labels.sessionId,
@@ -99,59 +98,6 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
     sampleInFlight = false;
   }
 });
-
-export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean> {
-  setBackgroundFloor(floor);
-
-  if (Platform.OS === "android") {
-    return false;
-  }
-
-  try {
-    let fgStatus = (await Location.getForegroundPermissionsAsync()).status;
-    if (fgStatus !== "granted") {
-      fgStatus = (await Location.requestForegroundPermissionsAsync()).status;
-    }
-    if (fgStatus !== "granted") {
-      return false;
-    }
-
-    let bgStatus = (await Location.getBackgroundPermissionsAsync()).status;
-    if (bgStatus !== "granted") {
-      bgStatus = (await Location.requestBackgroundPermissionsAsync()).status;
-    }
-    if (bgStatus !== "granted") {
-      return false;
-    }
-
-    const alreadyRunning = await TaskManager.isTaskRegisteredAsync(
-      WIFI_LOGGER_BACKGROUND_TASK
-    );
-    if (!alreadyRunning) {
-      await Location.startLocationUpdatesAsync(WIFI_LOGGER_BACKGROUND_TASK, {
-        accuracy: Location.Accuracy.Balanced,
-        distanceInterval: 10,
-        timeInterval: 15000,
-        deferredUpdatesInterval: 15000,
-        deferredUpdatesDistance: 25,
-        pausesUpdatesAutomatically: false,
-        showsBackgroundLocationIndicator: true,
-        activityType: Location.ActivityType.Fitness,
-        mayShowUserSettingsDialog: false,
-        foregroundService: {
-          notificationTitle: "Ascent is recording",
-          notificationBody: "Keep this notification visible. IMU and Wi-Fi rows are being written.",
-          killServiceOnDestroy: false,
-        },
-      });
-    }
-
-    return true;
-  } catch (e) {
-    console.error("Failed to start background location updates:", e);
-    return false;
-  }
-}
 
 export async function stopBackgroundLoggingAsync(): Promise<void> {
   try {

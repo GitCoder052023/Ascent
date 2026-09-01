@@ -22,7 +22,6 @@ import { EMPTY_WIFI, WIFI_SAMPLE_INTERVAL_MS } from "../constants/app";
 import { getDevicePresence, type DevicePresence } from "../lib/devicePresence";
 import { useMotionDetector } from "./useMotionDetector";
 import {
-  startBackgroundLoggingAsync,
   stopBackgroundLoggingAsync,
   setBackgroundFloor,
   isBackgroundLoggingActiveAsync,
@@ -97,12 +96,12 @@ export function useWifiLogger() {
     normalizedScore: number | null;
     estimatedDbm: number | null;
     frequencyBand: string;
-    source: "android-native" | "ios-estimated";
+    source: "android-native";
   }>({
     normalizedScore: null,
     estimatedDbm: null,
     frequencyBand: "UNKNOWN",
-    source: Platform.OS === "android" ? "android-native" : "ios-estimated",
+    source: "android-native",
   });
 
   const { isMoving, motionState, sampleIntervalMs } = useMotionDetector({
@@ -194,9 +193,7 @@ export function useWifiLogger() {
       const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
       const storedNetwork = await AsyncStorage.getItem(KEY_LOCKED_SSID);
       const nativeOn = isNativeImuRecording();
-      const locationOn =
-        Platform.OS !== "android" && (await isBackgroundLoggingActiveAsync());
-      if (!storedStarted && !nativeOn && !locationOn) {
+      if (!storedStarted && !nativeOn) {
         return;
       }
 
@@ -307,7 +304,7 @@ export function useWifiLogger() {
       const current = await getConnectedWifi();
       setWifi(current);
 
-      const processed = processWifiSignal(current, isMoving);
+      const processed = processWifiSignal(current);
       setLastProcessed(processed);
     } catch {
       setWifi(EMPTY_WIFI);
@@ -447,7 +444,7 @@ export function useWifiLogger() {
         );
       }
 
-      const processed = processWifiSignal(current, isMoving);
+      const processed = processWifiSignal(current);
       setLastProcessed(processed);
 
       const item = createMeasurement(floor, current, processed);
@@ -525,16 +522,6 @@ export function useWifiLogger() {
         // Tear down any leftover location FGS from older builds. Starting it
         // next to the IMU service recreates the Activity until recording is aborted.
         await stopBackgroundLoggingAsync().catch(() => {});
-      } else {
-        try {
-          const bgOk = await startBackgroundLoggingAsync(floor);
-          if (!bgOk) {
-            backgroundNotice =
-              "Background keep-alive could not start. Recording still runs while this screen stays open.";
-          }
-        } catch (e) {
-          console.warn("Could not start background task:", e);
-        }
       }
 
       if (Platform.OS === "android" && isUsingNativeImu()) {

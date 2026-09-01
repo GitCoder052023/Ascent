@@ -20,8 +20,7 @@ export function getFrequencyBand(frequency: number | null): FrequencyBand {
   return "UNKNOWN";
 }
 
-/** iOS-only: reverse-engineer dBm from a normalized/quantized score. */
-export type SignalSource = "android-native" | "ios-estimated";
+export type SignalSource = "android-native";
 
 export type ProcessedSignal = {
   normalizedScore: number | null;
@@ -60,75 +59,3 @@ export function nativeAndroidSignal(
     source: "android-native",
   };
 }
-
-export class SignalEstimationEngine {
-  private xEst: number | null = null; // Estimated normalized score
-  private P: number = 1.0;            // Error covariance
-  private R: number = 2.5;            // iOS step quantization measurement noise
-  private lastTimestamp: number = Date.now();
-
-  /**
-   * Process raw signal score (0.0 to 1.0) through Kalman Filter & Band Calibrator
-   * @param rawScore Normalized signal score from iOS (0.0 - 1.0)
-   * @param frequency Wi-Fi frequency in MHz
-   * @param isMoving Whether device is currently in motion
-   */
-  public processSignal(
-    rawScore: number | null,
-    frequency: number | null,
-    isMoving: boolean = false
-  ): ProcessedSignal {
-    const band = getFrequencyBand(frequency);
-    const bounds = BAND_BOUNDS[band];
-
-    if (rawScore === null || isNaN(rawScore)) {
-      return {
-        normalizedScore: null,
-        estimatedDbm: null,
-        frequencyBand: band,
-        source: "ios-estimated",
-      };
-    }
-
-    // Dynamic Process Noise: 0.01 when stationary (heavy smooth), 0.30 when moving (fast track)
-    const Q = isMoving ? 0.30 : 0.01;
-    const now = Date.now();
-    const dt = Math.max(1, (now - this.lastTimestamp) / 1000);
-    this.lastTimestamp = now;
-
-    // 1D Kalman Filter Update
-    if (this.xEst === null) {
-      this.xEst = rawScore;
-      this.P = 1.0;
-    } else {
-      // 1. Predict
-      this.P = this.P + Q * dt;
-
-      // 2. Update
-      const K = this.P / (this.P + this.R);
-      this.xEst = this.xEst + K * (rawScore - this.xEst);
-      this.P = (1 - K) * this.P;
-    }
-
-    // Clamp smoothed normalized score between 0 and 1
-    const smoothedScore = Math.max(0, Math.min(1, this.xEst));
-
-    // Piecewise band-aware calculation
-    const span = bounds.maxDbm - bounds.minDbm;
-    const estimatedDbm = Math.round((bounds.minDbm + smoothedScore * span) * 10) / 10;
-
-    return {
-      normalizedScore: Math.round(smoothedScore * 1000) / 1000,
-      estimatedDbm,
-      frequencyBand: band,
-      source: "ios-estimated",
-    };
-  }
-
-  public reset(): void {
-    this.xEst = null;
-    this.P = 1.0;
-  }
-}
-
-export const globalSignalEngine = new SignalEstimationEngine();

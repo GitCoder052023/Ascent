@@ -201,9 +201,8 @@ function SensorStatus({ logger }: { logger: ReturnType<typeof useWifiLogger> }) 
 }
 
 function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger> }) {
-  const nativeAndroid = logger.lastProcessed.source === "android-native";
   return (
-    <Section title="CURRENT CONNECTION & SIGNAL ENGINE">
+    <Section title="CURRENT CONNECTION">
       <InfoRow label="Connection" value={logger.wifi.connectionState} />
       <InfoRow label="SSID" value={logger.wifi.ssid} />
       <InfoRow label="BSSID" value={logger.wifi.bssid} />
@@ -228,19 +227,9 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
         }
       />
       <InfoRow
-        label={nativeAndroid ? "Normalized" : "Normalized"}
+        label="Normalized"
         value={logger.lastProcessed.normalizedScore}
       />
-      {!nativeAndroid && (
-        <InfoRow
-          label="RSSI (estimated)"
-          value={
-            logger.lastProcessed.estimatedDbm === null
-              ? null
-              : `${logger.lastProcessed.estimatedDbm} dBm`
-          }
-        />
-      )}
     </Section>
   );
 }

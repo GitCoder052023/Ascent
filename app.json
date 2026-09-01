@@ -7,19 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "ascent",
     "userInterfaceStyle": "automatic",
-    "ios": {
-      "icon": "./assets/expo.icon",
-      "entitlements": {
-        "com.apple.developer.networking.wifi-info": true
-      },
-      "infoPlist": {
-        "UIBackgroundModes": [
-          "location"
-        ],
-        "NSLocationWhenInUseUsageDescription": "Ascent needs location permission to access connected Wi-Fi SSID and signal metrics.",
-        "NSLocationAlwaysAndWhenInUseUsageDescription": "Ascent needs background location access to map Wi-Fi signal strength continuously while moving across floors."
-      }
-    },
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -68,7 +55,7 @@
           "locationAlwaysAndWhenInUsePermission": "Ascent needs location access to map Wi-Fi signal strength in background.",
           "isAndroidBackgroundLocationEnabled": true,
           "isAndroidForegroundServiceEnabled": true,
-          "isIosBackgroundLocationEnabled": true
+          "isIosBackgroundLocationEnabled": false
         }
       ],
       [

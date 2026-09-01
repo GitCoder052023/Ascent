@@ -1,5 +1,4 @@
 import { Accelerometer, Barometer, Gyroscope } from "expo-sensors";
-import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
 import {
@@ -228,17 +227,7 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
   }
 
   usingNativeImu = false;
-
-  if (Platform.OS === "android") {
-    acquireCpuWakeLock();
-  } else {
-    try {
-      await activateKeepAwakeAsync("raw-sensor-collector");
-    } catch {
-      // Keep-awake is optional.
-    }
-  }
-
+  acquireCpuWakeLock();
   clearSubscriptions();
 
   attachSensor(available.accelerometerAvailable, () => {
@@ -385,11 +374,6 @@ export async function stopImuCollector(): Promise<void> {
   }
   try {
     releaseCpuWakeLock();
-  } catch {
-    // Ignore.
-  }
-  try {
-    await deactivateKeepAwake("raw-sensor-collector");
   } catch {
     // Ignore.
   }

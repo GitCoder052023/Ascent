@@ -50,8 +50,8 @@ Built with **Expo SDK 57** · **React Native 0.86** · **TypeScript 6.0**
      ┌─────────┬─────────┼─────────┬─────────┐
      ▼         ▼         ▼         ▼         ▼
  lib/wifi   signal    rawObs    recording   db.ts
- NetInfo +  Engine    builders  context    SQLite Engine
- WifiMgr    (UI Only) + types   labels     (WAL Mode)
+ NetInfo +  Android   builders  context    SQLite Engine
+ WifiMgr    RSSI      + types   labels     (WAL Mode)
 
 ```
 
@@ -81,7 +81,7 @@ timestamp                      sensorType       accelX   gyroX   pressure   RSSI
 
 * Node.js ≥ 18
 * Expo CLI & EAS CLI (`npm install -g eas-cli`)
-* Physical iOS or Android device (sensors and Wi-Fi scanning are disabled/mocked in simulators)
+* Physical Android device (sensors and Wi-Fi scanning are disabled/mocked in emulators)
 
 ### Installation
 
@@ -103,9 +103,6 @@ Because this project relies on custom native modules (`react-native-wifi-reborn`
 # Build for Android
 eas build --profile development --platform android
 
-# Build for iOS
-eas build --profile development --platform ios
-
 ```
 
 ---
@@ -117,7 +114,6 @@ eas build --profile development --platform ios
 | `ACCESS_FINE_LOCATION` | Required by Android to read Wi-Fi network information (SSID/BSSID) |
 | `ACCESS_BACKGROUND_LOCATION` | Enables background Wi-Fi signal logging during walks |
 | `FOREGROUND_SERVICE` | Keeps the data collection worker active on Android |
-| `NSMotionUsageDescription` | Access to Accelerometer, Gyroscope, and Barometer hardware |
 
 ---
 

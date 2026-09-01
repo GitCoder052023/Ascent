@@ -35,7 +35,7 @@ export function getDevicePresence(): DevicePresence {
 
   return {
     appState: "BACKGROUND",
-    lockScreen: Platform.OS === "ios" ? "UNKNOWN" : "UNKNOWN",
+    lockScreen: "UNKNOWN",
     screenOn: "UNKNOWN",
   };
 }

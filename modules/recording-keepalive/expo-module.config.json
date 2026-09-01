@@ -1,8 +1,5 @@
 {
-  "platforms": ["apple", "android"],
-  "apple": {
-    "modules": ["RecordingKeepaliveModule"]
-  },
+  "platforms": ["android"],
   "android": {
     "modules": ["expo.modules.recordingkeepalive.RecordingKeepaliveModule"]
   }
