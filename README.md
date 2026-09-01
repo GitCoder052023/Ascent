@@ -109,7 +109,7 @@ npm install
 Custom native code (`recording-keepalive`, `react-native-wifi-reborn`, foreground services) requires a **development build**, not Expo Go:
 
 ```bash
-eas build --profile development --platform android
+eas build --platform android --profile preview
 ```
 
 Lock Ascent in Recents, grant **unrestricted battery**, and choose **Allow all the time** for location so SSID/RSSI stay readable with the screen off. OEM process killers can still create gaps.
