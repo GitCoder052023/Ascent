@@ -227,13 +227,14 @@ internal class ImuSqliteWriter(context: Context) {
     bindText(statement, 18, sample.ssid)
     bindText(statement, 19, sample.bssid)
     bindDouble(statement, 20, sample.rssi)
-    bindText(statement, 21, if (sample.sensorType == "wifi" && sample.rssi != null) "dBm" else null)
+    bindText(statement, 21, if (sample.rssi != null) "dBm" else null)
     if (sample.frequency != null) {
       statement.bindLong(22, sample.frequency.toLong())
     } else {
       statement.bindNull(22)
     }
-    bindText(statement, 23, if (sample.sensorType == "wifi") "wifi" else null)
+    val hasWifi = sample.ssid != null || sample.bssid != null || sample.rssi != null || sample.sensorType == "wifi"
+    bindText(statement, 23, if (hasWifi) "wifi" else null)
     statement.bindString(24, "android")
     bindText(statement, 25, snap.deviceModel)
     bindText(statement, 26, snap.osVersion)

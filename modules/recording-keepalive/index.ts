@@ -1,5 +1,7 @@
 import { Platform } from "react-native";
-import { requireOptionalNativeModule, type EventSubscription } from "expo";
+import { requireOptionalNativeModule } from "expo";
+
+type EventSubscription = { remove: () => void };
 
 export type NativeLatestEvent = {
   accelerometer: string | null;

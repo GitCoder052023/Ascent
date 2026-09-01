@@ -56,6 +56,9 @@ class RecordingImuService : Service(), SensorEventListener {
   private var lockedSsid: String? = null
   private var lastWifi: ConnectedWifiSnapshot? = null
   private var lastWifiIso: String? = null
+  private val currentWifi = AtomicReference(
+    ConnectedWifiSnapshot(false, null, null, null, null)
+  )
   private var wifiSsidMismatch = false
   private var wifiHandlerThread: HandlerThread? = null
   private val lastPresence = AtomicReference(
@@ -86,6 +89,9 @@ class RecordingImuService : Service(), SensorEventListener {
         return
       }
       DevicePresence.ensureRegistered(this)
+      val initialWifi = ConnectedWifi.read(this)
+      currentWifi.set(initialWifi)
+      lastWifi = initialWifi
       writer = sqlite
       activeWriter = sqlite
       sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -243,8 +249,13 @@ class RecordingImuService : Service(), SensorEventListener {
 
   private fun enqueueSample(sample: ImuSample) {
     val presence = lastPresence.get()
+    val wifi = currentWifi.get()
     writer?.enqueue(
       sample.copy(
+        ssid = sample.ssid ?: wifi.ssid,
+        bssid = sample.bssid ?: wifi.bssid,
+        rssi = sample.rssi ?: wifi.rssi?.toDouble(),
+        frequency = sample.frequency ?: wifi.frequency,
         appState = presence.appState,
         lockScreen = presence.lockScreen,
         screenOn = presence.screenOn,
@@ -257,6 +268,7 @@ class RecordingImuService : Service(), SensorEventListener {
       return
     }
     val snapshot = ConnectedWifi.read(this)
+    currentWifi.set(snapshot)
     lastWifi = snapshot
     val now = System.currentTimeMillis()
     val lock = lockedSsid

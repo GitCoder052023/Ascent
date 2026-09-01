@@ -45,6 +45,7 @@ import {
   setCachedMotionState,
   setCachedRecording,
   setCachedSessionId,
+  setCachedWifi,
 } from "../lib/recordingContext";
 import { PLATFORM_SENSOR_NOTES, type ActivityLabel } from "../lib/rawTypes";
 import {
@@ -134,7 +135,6 @@ export function useWifiLogger() {
     setBackgroundFloor(floor);
   }, [floor]);
 
-  /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
     async function init() {
       const labels = await hydrateLabelsFromStorage();
@@ -174,7 +174,6 @@ export function useWifiLogger() {
 
     return () => subscription.remove();
   }, []);
-  /* eslint-enable react-hooks/exhaustive-deps */
 
   useEffect(() => {
     const clock = setInterval(() => {
@@ -258,14 +257,18 @@ export function useWifiLogger() {
         return;
       }
       const connected = event.wifiConnectionState === "CONNECTED";
-      setWifi({
-        connectionState: connected ? "CONNECTED" : "DISCONNECTED",
+      const nextWifi = {
         ssid: event.wifiSsid ?? null,
         bssid: event.wifiBssid ?? null,
         signalStrength: event.wifiRssi ?? null,
-        signalStrengthUnit: event.wifiRssi != null ? "dBm" : null,
+        signalStrengthUnit: event.wifiRssi != null ? ("dBm" as const) : null,
         frequency: event.wifiFrequency ?? null,
+      };
+      setWifi({
+        connectionState: connected ? "CONNECTED" : "DISCONNECTED",
+        ...nextWifi,
       });
+      setCachedWifi(nextWifi);
       setLastProcessed(nativeAndroidSignal(event.wifiRssi ?? null, event.wifiFrequency ?? null));
       if (event.wifiSsidMismatch) {
         setPaused(true);
@@ -306,6 +309,13 @@ export function useWifiLogger() {
     try {
       const current = await getConnectedWifi();
       setWifi(current);
+      setCachedWifi({
+        ssid: current.ssid,
+        bssid: current.bssid,
+        signalStrength: current.signalStrength,
+        signalStrengthUnit: current.signalStrengthUnit,
+        frequency: current.frequency,
+      });
 
       const processed = processWifiSignal(current);
       setLastProcessed(processed);
@@ -439,6 +449,13 @@ export function useWifiLogger() {
     try {
       const current = await getConnectedWifi();
       setWifi(current);
+      setCachedWifi({
+        ssid: current.ssid,
+        bssid: current.bssid,
+        signalStrength: current.signalStrength,
+        signalStrengthUnit: current.signalStrengthUnit,
+        frequency: current.frequency,
+      });
 
       if (network && current.ssid && current.ssid !== network) {
         setPaused(true);

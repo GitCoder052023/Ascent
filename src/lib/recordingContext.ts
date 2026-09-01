@@ -16,6 +16,14 @@ export type CachedLabels = {
   lockedSsid: string | null;
 };
 
+export type CachedWifi = {
+  ssid: string | null;
+  bssid: string | null;
+  signalStrength: number | null;
+  signalStrengthUnit: "dBm" | null;
+  frequency: number | null;
+};
+
 const cache: CachedLabels = {
   sessionId: null,
   floor: "FLOOR_1",
@@ -24,6 +32,25 @@ const cache: CachedLabels = {
   recording: false,
   lockedSsid: null,
 };
+
+let cachedWifi: CachedWifi = {
+  ssid: null,
+  bssid: null,
+  signalStrength: null,
+  signalStrengthUnit: null,
+  frequency: null,
+};
+
+export function getCachedWifi(): CachedWifi {
+  return cachedWifi;
+}
+
+export function setCachedWifi(wifi: Partial<CachedWifi>) {
+  cachedWifi = {
+    ...cachedWifi,
+    ...wifi,
+  };
+}
 
 function isFloor(value: string | null): value is Floor {
   return value === "FLOOR_1" || value === "FLOOR_2";

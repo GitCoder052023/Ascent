@@ -1,4 +1,5 @@
 import { getDevicePresence } from "./devicePresence";
+import { getCachedWifi, type CachedWifi } from "./recordingContext";
 import type {
   ActivityLabel,
   Floor,
@@ -52,9 +53,12 @@ function baseObservation(
   arrivalMs: number,
   sensorTimestamp: number | null,
   labels: LabelContext,
-  device: DeviceMeta
+  device: DeviceMeta,
+  wifiOverride?: Partial<CachedWifi>
 ): RawObservation {
   const arrivalTimestamp = formatIsoMillis(arrivalMs);
+  const wifi = { ...getCachedWifi(), ...wifiOverride };
+  const hasWifi = Boolean(wifi.ssid || wifi.bssid || wifi.signalStrength !== null);
   return {
     id: nextObservationId(arrivalMs, sensorType),
     sessionId: labels.sessionId,
@@ -67,6 +71,13 @@ function baseObservation(
     activity: labels.activity,
     motionState: labels.motionState,
     ...emptySensorFields,
+    ssid: wifi.ssid,
+    bssid: wifi.bssid,
+    signalStrength: wifi.signalStrength,
+    signalStrengthUnit:
+      wifi.signalStrength !== null ? (wifi.signalStrengthUnit ?? "dBm") : null,
+    frequency: wifi.frequency,
+    connectionType: hasWifi || sensorType === "wifi" ? "wifi" : null,
     platform: device.platform,
     deviceModel: device.deviceModel,
     osVersion: device.osVersion,
@@ -81,10 +92,11 @@ export function createAccelerometerObservation(
   y: number,
   z: number,
   labels: LabelContext,
-  device: DeviceMeta
+  device: DeviceMeta,
+  wifi?: Partial<CachedWifi>
 ): RawObservation {
   return {
-    ...baseObservation("accelerometer", arrivalMs, sensorTimestamp, labels, device),
+    ...baseObservation("accelerometer", arrivalMs, sensorTimestamp, labels, device, wifi),
     accelerometerX: x,
     accelerometerY: y,
     accelerometerZ: z,
@@ -98,10 +110,11 @@ export function createGyroscopeObservation(
   y: number,
   z: number,
   labels: LabelContext,
-  device: DeviceMeta
+  device: DeviceMeta,
+  wifi?: Partial<CachedWifi>
 ): RawObservation {
   return {
-    ...baseObservation("gyroscope", arrivalMs, sensorTimestamp, labels, device),
+    ...baseObservation("gyroscope", arrivalMs, sensorTimestamp, labels, device, wifi),
     gyroscopeX: x,
     gyroscopeY: y,
     gyroscopeZ: z,
@@ -113,10 +126,11 @@ export function createBarometerObservation(
   sensorTimestamp: number | null,
   pressure: number,
   labels: LabelContext,
-  device: DeviceMeta
+  device: DeviceMeta,
+  wifi?: Partial<CachedWifi>
 ): RawObservation {
   return {
-    ...baseObservation("barometer", arrivalMs, sensorTimestamp, labels, device),
+    ...baseObservation("barometer", arrivalMs, sensorTimestamp, labels, device, wifi),
     barometerPressure: pressure,
   };
 }
@@ -135,7 +149,7 @@ export function createWifiObservation(
   id?: string
 ): RawObservation {
   const row = {
-    ...baseObservation("wifi", arrivalMs, null, labels, device),
+    ...baseObservation("wifi", arrivalMs, null, labels, device, wifi),
     ssid: wifi.ssid,
     bssid: wifi.bssid,
     signalStrength: wifi.signalStrength,

@@ -29,9 +29,14 @@ internal object ConnectedWifi {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         info = caps?.transportInfo as? WifiInfo
       }
-      if (info == null) {
+      if (info == null || info.rssi <= -127 || info.rssi >= 0) {
         @Suppress("DEPRECATION")
-        info = wm.connectionInfo
+        val fallback = wm.connectionInfo
+        if (fallback != null) {
+          if (info == null || (fallback.rssi < 0 && fallback.rssi > -127)) {
+            info = fallback
+          }
+        }
       }
 
       val ssid = normalizeSsid(info?.ssid)
