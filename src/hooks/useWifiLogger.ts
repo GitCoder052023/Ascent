@@ -34,7 +34,7 @@ import {
   nextSessionId,
 } from "../lib/db";
 import { formatIsoMillis } from "../lib/rawObservation";
-import { nativeAndroidSignal } from "../lib/signalEngine";
+import * as Location from "expo-location";
 import {
   hydrateLabelsFromStorage,
   KEY_LOCKED_SSID,
@@ -347,6 +347,9 @@ export function useWifiLogger() {
   }
 
   async function requestBackgroundLocation() {
+    if (await hasBackgroundLocation()) {
+      return;
+    }
     const background =
       PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION ??
       "android.permission.ACCESS_BACKGROUND_LOCATION";
@@ -367,6 +370,31 @@ export function useWifiLogger() {
         ]
       );
     });
+  }
+
+  async function hasBackgroundLocation(): Promise<boolean> {
+    if (Platform.OS !== "android") {
+      return true;
+    }
+    if (typeof Platform.Version === "number" && Platform.Version < 29) {
+      return true;
+    }
+    try {
+      const background = await Location.getBackgroundPermissionsAsync();
+      if (background.status === "granted") {
+        return true;
+      }
+    } catch {
+      // Fall through to the platform permission check.
+    }
+    try {
+      const permission =
+        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION ??
+        "android.permission.ACCESS_BACKGROUND_LOCATION";
+      return await PermissionsAndroid.check(permission);
+    } catch {
+      return false;
+    }
   }
 
   async function ensureUnrestrictedBattery(): Promise<boolean> {

@@ -25,6 +25,9 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.sqrt
 
 class RecordingImuService : Service(), SensorEventListener {
@@ -71,7 +74,14 @@ class RecordingImuService : Service(), SensorEventListener {
         setReferenceCounted(false)
         acquire()
       }
-      writer = ImuSqliteWriter(this).also { it.start() }
+      val sqlite = ImuSqliteWriter(this)
+      if (!sqlite.start()) {
+        signalStart(false)
+        stopSelf()
+        return
+      }
+      writer = sqlite
+      activeWriter = sqlite
       sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
       accel = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
       gyro = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
@@ -86,8 +96,10 @@ class RecordingImuService : Service(), SensorEventListener {
       wifiScheduled = true
       handler.post(wifiTick)
       running = true
+      signalStart(true)
     } catch (_: Exception) {
-      running = true
+      running = false
+      signalStart(false)
     }
   }
 
@@ -98,7 +110,10 @@ class RecordingImuService : Service(), SensorEventListener {
     }
     enterForeground()
     applyLabels(intent)
-    running = true
+    if (writer != null) {
+      running = true
+      signalStart(true)
+    }
     if (!wifiScheduled) {
       wifiScheduled = true
       wifiHandler?.post(wifiTick)
@@ -303,36 +318,34 @@ class RecordingImuService : Service(), SensorEventListener {
       .build()
     val locationOk = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
       PackageManager.PERMISSION_GRANTED
-    val typeMask = if (Build.VERSION.SDK_INT >= 34) {
-      var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+    val candidates = ArrayList<Int>()
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
       if (locationOk) {
-        types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+        candidates.add(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
       }
-      types
-    } else {
-      0
+      candidates.add(ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+      if (locationOk) {
+        candidates.add(
+          ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION or ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+        )
+      }
     }
-    try {
-      if (Build.VERSION.SDK_INT >= 34) {
-        startForeground(NOTIFICATION_ID, notification, typeMask)
-      } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        startForeground(NOTIFICATION_ID, notification, 0)
-      } else {
-        startForeground(NOTIFICATION_ID, notification)
-      }
-    } catch (_: Exception) {
+    var started = false
+    for (types in candidates) {
       try {
-        if (Build.VERSION.SDK_INT >= 34) {
-          startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
-        } else {
-          startForeground(NOTIFICATION_ID, notification)
-        }
+        startForeground(NOTIFICATION_ID, notification, types)
+        started = true
+        break
       } catch (_: Exception) {
-        try {
-          startForeground(NOTIFICATION_ID, notification)
-        } catch (_: Exception) {
-          // Keep sampling even if the notification type is rejected.
-        }
+        // Try the next declared FGS type. HEALTH|LOCATION together is rejected on
+        // some OEMs even when LOCATION alone would be allowed.
+      }
+    }
+    if (!started) {
+      try {
+        startForeground(NOTIFICATION_ID, notification)
+      } catch (_: Exception) {
+        // Keep sampling even if the notification type is rejected.
       }
     }
   }
@@ -372,6 +385,8 @@ class RecordingImuService : Service(), SensorEventListener {
     sensorThread = null
     writer?.stop()
     writer = null
+    activeWriter = null
+    writerReady = false
     if (wakeLock?.isHeld == true) {
       wakeLock?.release()
     }
@@ -402,18 +417,38 @@ class RecordingImuService : Service(), SensorEventListener {
 
     @Volatile var running = false
       private set
+    @Volatile var writerReady = false
+      private set
     @Volatile var lastSampleAtElapsed = 0L
+    @Volatile var activeWriter: ImuSqliteWriter? = null
+    private val startLatch = AtomicReference<CountDownLatch?>(null)
 
-    fun start(context: Context, options: Map<String, String?>) {
+    fun start(context: Context, options: Map<String, String?>): Boolean {
       val intent = labeledIntent(context, options)
-      if (running) {
+      if (running && writerReady) {
         context.startService(intent)
-        return
+        return true
       }
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        context.startForegroundService(intent)
-      } else {
-        context.startService(intent)
+      val latch = CountDownLatch(1)
+      startLatch.set(latch)
+      writerReady = false
+      try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+          context.startForegroundService(intent)
+        } else {
+          context.startService(intent)
+        }
+      } catch (_: Exception) {
+        startLatch.set(null)
+        return false
+      }
+      if (Looper.myLooper() == Looper.getMainLooper()) {
+        return true
+      }
+      return try {
+        latch.await(8, TimeUnit.SECONDS) && writerReady
+      } catch (_: InterruptedException) {
+        writerReady
       }
     }
 
@@ -436,6 +471,11 @@ class RecordingImuService : Service(), SensorEventListener {
         "gyroscopeAvailable" to (sm.getDefaultSensor(Sensor.TYPE_GYROSCOPE) != null),
         "barometerAvailable" to (sm.getDefaultSensor(Sensor.TYPE_PRESSURE) != null),
       )
+    }
+
+    private fun signalStart(ok: Boolean) {
+      writerReady = ok && activeWriter != null
+      startLatch.getAndSet(null)?.countDown()
     }
 
     private fun labeledIntent(context: Context, options: Map<String, String?>): Intent {

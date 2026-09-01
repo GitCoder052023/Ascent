@@ -53,28 +53,33 @@ internal class ImuSqliteWriter(context: Context) {
   private var thread: HandlerThread? = null
   private var handler: Handler? = null
 
-  fun start() {
+  fun start(): Boolean {
     if (thread != null) {
-      return
+      return db != null
     }
-    dbFile.parentFile?.mkdirs()
-    val opened = SQLiteDatabase.openDatabase(
-      dbFile.path,
-      null,
-      SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY
-    )
-    opened.enableWriteAheadLogging()
-    opened.execSQL("PRAGMA busy_timeout = 8000")
-    opened.execSQL(CREATE_RAW)
-    opened.execSQL(CREATE_MEASUREMENTS)
-    insertRaw = opened.compileStatement(INSERT_RAW)
-    insertMeasurement = opened.compileStatement(INSERT_MEASUREMENT)
-    db = opened
+    return try {
+      dbFile.parentFile?.mkdirs()
+      val opened = SQLiteDatabase.openDatabase(
+        dbFile.path,
+        null,
+        SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY
+      )
+      opened.enableWriteAheadLogging()
+      opened.execSQL("PRAGMA busy_timeout = 8000")
+      opened.execSQL(CREATE_RAW)
+      opened.execSQL(CREATE_MEASUREMENTS)
+      insertRaw = opened.compileStatement(INSERT_RAW)
+      insertMeasurement = opened.compileStatement(INSERT_MEASUREMENT)
+      db = opened
 
-    val writer = HandlerThread("ascent-imu-db").also { it.start() }
-    thread = writer
-    handler = Handler(writer.looper)
-    handler?.postDelayed(flushRunnable, FLUSH_MS)
+      val writer = HandlerThread("ascent-imu-db").also { it.start() }
+      thread = writer
+      handler = Handler(writer.looper)
+      handler?.postDelayed(flushRunnable, FLUSH_MS)
+      true
+    } catch (_: Exception) {
+      false
+    }
   }
 
   fun enqueue(sample: ImuSample) {
@@ -102,9 +107,30 @@ internal class ImuSqliteWriter(context: Context) {
     }
   }
 
+  fun observationCount(): Long {
+    val database = db ?: return -1L
+    val flushed = try {
+      database.rawQuery("SELECT COUNT(*) FROM raw_observations", null).use { cursor ->
+        if (cursor.moveToFirst()) cursor.getLong(0) else 0L
+      }
+    } catch (_: Exception) {
+      return -1L
+    }
+    return flushed + queue.size
+  }
+
+  fun checkpoint(mode: String = "PASSIVE") {
+    try {
+      db?.rawQuery("PRAGMA wal_checkpoint($mode)", null)?.close()
+    } catch (_: Exception) {
+      // Keep writing even if the JS connection is holding a page.
+    }
+  }
+
   fun stop() {
     handler?.removeCallbacks(flushRunnable)
     flushBlocking()
+    checkpoint("TRUNCATE")
     insertRaw?.close()
     insertRaw = null
     insertMeasurement?.close()
@@ -160,7 +186,12 @@ internal class ImuSqliteWriter(context: Context) {
         queue.add(sample)
       }
     } finally {
-      database.endTransaction()
+      try {
+        database.endTransaction()
+      } catch (_: Exception) {
+        // Next flush retries the same batch.
+      }
+      checkpoint("PASSIVE")
     }
   }
 

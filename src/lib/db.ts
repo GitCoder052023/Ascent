@@ -1,4 +1,8 @@
 import * as SQLite from "expo-sqlite";
+import {
+  flushNativeImuWrites,
+  nativeRawObservationCount,
+} from "../../modules/recording-keepalive";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
@@ -249,6 +253,7 @@ type DbRow = {
 
 export async function getAllMeasurements(): Promise<Measurement[]> {
   await flushWriteBuffer();
+  await flushNativeImuWrites();
   const db = await getDatabase();
   const rows = await db.getAllAsync<DbRow>("SELECT * FROM measurements ORDER BY timestamp ASC");
 
@@ -456,6 +461,7 @@ export async function saveRawObservationBuffered(item: RawObservation): Promise<
 export async function getAllRawObservations(): Promise<RawObservation[]> {
   await flushWriteBuffer();
   await flushRawWriteBuffer();
+  await flushNativeImuWrites();
   const db = await getDatabase();
   const rows = await db.getAllAsync<RawDbRow>(
     "SELECT * FROM raw_observations ORDER BY timestamp ASC, id ASC"
@@ -464,11 +470,13 @@ export async function getAllRawObservations(): Promise<RawObservation[]> {
 }
 
 export async function getRawObservationCount(): Promise<number> {
+  const nativeCount = nativeRawObservationCount();
   const db = await getDatabase();
   const row = await db.getFirstAsync<{ count: number }>(
     "SELECT COUNT(*) as count FROM raw_observations"
   );
-  cachedRawDbCount = row?.count ?? 0;
+  const jsCount = row?.count ?? 0;
+  cachedRawDbCount = Math.max(jsCount, nativeCount ?? 0);
   return cachedRawDbCount + rawWriteBuffer.length;
 }
 

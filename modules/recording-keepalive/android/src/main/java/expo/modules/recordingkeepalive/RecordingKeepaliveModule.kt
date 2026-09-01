@@ -108,6 +108,18 @@ class RecordingKeepaliveModule : Module() {
       RecordingImuService.probe(ctx)
     }
 
+    Function("rawCount") {
+      RecordingImuService.activeWriter?.observationCount() ?: -1L
+    }
+
+    AsyncFunction("flushWrites") {
+      RecordingImuService.activeWriter?.let { writer ->
+        writer.flushBlocking()
+        writer.checkpoint("PASSIVE")
+        true
+      } ?: false
+    }
+
     AsyncFunction("startRecording") { options: Map<String, Any?> ->
       startImu(options.mapValues { (_, value) -> value as? String })
     }
@@ -128,8 +140,7 @@ class RecordingKeepaliveModule : Module() {
 
   private fun startImu(options: Map<String, String?>): Boolean {
     val ctx = appContext.reactContext ?: appContext.currentActivity ?: return false
-    RecordingImuService.start(ctx.applicationContext, options)
-    return true
+    return RecordingImuService.start(ctx.applicationContext, options)
   }
 
   private fun stopImu(): Boolean {

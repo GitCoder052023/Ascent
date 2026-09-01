@@ -42,6 +42,8 @@ type RecordingKeepaliveNative = {
   startRecording: (options: Record<string, string | null | undefined>) => Promise<boolean>;
   updateLabels: (options: Record<string, string | null | undefined>) => boolean;
   stopRecording: () => Promise<boolean>;
+  rawCount: () => number;
+  flushWrites: () => Promise<boolean>;
   addListener: (
     event: "onLatest",
     listener: (event: NativeLatestEvent) => void
@@ -181,6 +183,29 @@ export function updateNativeImuLabels(options: NativeRecordingOptions): boolean 
     return native.updateLabels(compactOptions(options));
   } catch {
     return false;
+  }
+}
+
+export function nativeRawObservationCount(): number | null {
+  if (!isNativeImuAvailable() || !native) {
+    return null;
+  }
+  try {
+    const count = native.rawCount();
+    return typeof count === "number" && count >= 0 ? count : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function flushNativeImuWrites(): Promise<void> {
+  if (!isNativeImuAvailable() || !native) {
+    return;
+  }
+  try {
+    await native.flushWrites();
+  } catch {
+    // JS can still attempt a read.
   }
 }
 
