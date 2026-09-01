@@ -9,7 +9,6 @@ import { formatDuration } from "../utils/format";
 import { styles } from "../styles/appStyles";
 
 const FLOOR_SUB: Record<Floor, string> = {
-  GROUND_FLOOR: "Ground",
   FLOOR_1: "Strength area",
   FLOOR_2: "Cardio area",
 };

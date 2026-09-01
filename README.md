@@ -10,7 +10,7 @@ Built with **Expo SDK 57** · **React Native 0.86** · **TypeScript 6.0**
 
 * **Unfiltered Raw Sensors** — Direct recording of accelerometer ($x/y/z$), gyroscope ($x/y/z$), and barometric pressure from platform hardware APIs.
 * **Independent Sparse Rows** — Event-driven storage: each sensor firing writes its own observation row so native sampling rates are preserved.
-* **Manual Ground-Truth Labeling** — Real-time tags for spatial context (`GROUND_FLOOR`, `FLOOR_1`, `FLOOR_2`) and transition activities (`GOING_UPSTAIRS`, `COMING_DOWNSTAIRS`).
+* **Manual Ground-Truth Labeling** — Real-time tags for spatial context (`FLOOR_1`, `FLOOR_2`) and transition activities (`GOING_UPSTAIRS`, `COMING_DOWNSTAIRS`).
 * **Connected Wi-Fi Logging** — Records the associated AP only (SSID, BSSID, RSSI in dBm, frequency). No AP scan. On Android during a session this is polled every **2s** from `WifiInfo` in foreground, background, and on the lock screen.
 * **Native Android Capture** — IMU and Wi-Fi rows are written by a `RecordingImuService` foreground service (`SENSOR_DELAY_FASTEST` for IMU) so JavaScript is not on the sample path. Unrestricted battery is required to start a session.
 * **Device Presence** — Each raw row stores `appState` (`FOREGROUND` / `BACKGROUND`), `lockScreen`, and `screenOn`.
@@ -147,7 +147,7 @@ iOS background location is **disabled** in `app.json`. The native keepalive modu
 | `sensorTimestamp` | number \| null | Platform sensor clock (seconds, not Unix) |
 | `timestampSource` | string | `arrival` |
 | `sensorType` | string | `accelerometer` \| `gyroscope` \| `barometer` \| `wifi` |
-| `floor` | string \| null | `GROUND_FLOOR`, `FLOOR_1`, `FLOOR_2` |
+| `floor` | string \| null | `FLOOR_1`, `FLOOR_2` |
 | `activity` | string \| null | `GOING_UPSTAIRS`, `COMING_DOWNSTAIRS` |
 | `motionState` | string \| null | Heuristic `WALKING` \| `STATIONARY` |
 | `accelerometerX/Y/Z` | number \| null | Raw acceleration ($g$) |

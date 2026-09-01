@@ -26,7 +26,7 @@ const cache: CachedLabels = {
 };
 
 function isFloor(value: string | null): value is Floor {
-  return value === "GROUND_FLOOR" || value === "FLOOR_1" || value === "FLOOR_2";
+  return value === "FLOOR_1" || value === "FLOOR_2";
 }
 
 function isActivity(value: string | null): value is ActivityLabel {

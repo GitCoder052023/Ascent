@@ -79,7 +79,7 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
     }
 
     const currentFloor =
-      labels.floor === "GROUND_FLOOR" || labels.floor === "FLOOR_1" || labels.floor === "FLOOR_2"
+      labels.floor === "FLOOR_1" || labels.floor === "FLOOR_2"
         ? labels.floor
         : activeFloor;
 

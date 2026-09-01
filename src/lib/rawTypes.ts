@@ -1,4 +1,4 @@
-export type Floor = "GROUND_FLOOR" | "FLOOR_1" | "FLOOR_2";
+export type Floor = "FLOOR_1" | "FLOOR_2";
 
 export type ActivityLabel = "GOING_UPSTAIRS" | "COMING_DOWNSTAIRS";
 
@@ -97,7 +97,7 @@ export const RAW_CSV_COLUMNS: (keyof RawObservation)[] = [
   "screenOn",
 ];
 
-export const FLOOR_OPTIONS: Floor[] = ["GROUND_FLOOR", "FLOOR_1", "FLOOR_2"];
+export const FLOOR_OPTIONS: Floor[] = ["FLOOR_1", "FLOOR_2"];
 
 export const ACTIVITY_OPTIONS: ActivityLabel[] = [
   "GOING_UPSTAIRS",
