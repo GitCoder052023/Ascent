@@ -1,15 +1,15 @@
 package expo.modules.recordingkeepalive
 
 import android.app.Activity
-import android.app.Application
 import android.app.ActivityManager
+import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
 import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 internal data class PresenceSnapshot(
   val appState: String,
@@ -19,30 +19,35 @@ internal data class PresenceSnapshot(
 
 internal object DevicePresence {
   private val registered = AtomicBoolean(false)
-  private val startedActivities = AtomicInteger(0)
+  private val resumedActivityIds = ConcurrentHashMap.newKeySet<Int>()
 
   fun ensureRegistered(context: Context, currentActivity: Activity? = null) {
     val app = context.applicationContext as? Application ?: return
     if (!registered.compareAndSet(false, true)) {
       return
     }
-    if (currentActivity != null) {
-      startedActivities.set(1)
+    if (currentActivity != null && !currentActivity.isFinishing) {
+      if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1 || !currentActivity.isDestroyed) {
+        resumedActivityIds.add(System.identityHashCode(currentActivity))
+      }
     }
     app.registerActivityLifecycleCallbacks(object : Application.ActivityLifecycleCallbacks {
-      override fun onActivityStarted(activity: Activity) {
-        startedActivities.incrementAndGet()
+      override fun onActivityResumed(activity: Activity) {
+        resumedActivityIds.add(System.identityHashCode(activity))
       }
 
-      override fun onActivityStopped(activity: Activity) {
-        startedActivities.updateAndGet { value -> (value - 1).coerceAtLeast(0) }
+      override fun onActivityPaused(activity: Activity) {
+        resumedActivityIds.remove(System.identityHashCode(activity))
+      }
+
+      override fun onActivityDestroyed(activity: Activity) {
+        resumedActivityIds.remove(System.identityHashCode(activity))
       }
 
       override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
-      override fun onActivityResumed(activity: Activity) = Unit
-      override fun onActivityPaused(activity: Activity) = Unit
+      override fun onActivityStarted(activity: Activity) = Unit
+      override fun onActivityStopped(activity: Activity) = Unit
       override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
-      override fun onActivityDestroyed(activity: Activity) = Unit
     })
   }
 
@@ -65,9 +70,19 @@ internal object DevicePresence {
   }
 
   private fun isForeground(context: Context): Boolean {
-    if (startedActivities.get() > 0) {
+    // If the display is off, the user is not actively in the app.
+    if (!isScreenOn(context)) {
+      return false
+    }
+    // If the lock screen is active, the app cannot be in active interactive foreground.
+    if (isLockScreen(context)) {
+      return false
+    }
+    // Direct check: is at least one activity currently resumed/active?
+    if (resumedActivityIds.isNotEmpty()) {
       return true
     }
+    // Fallback: check process importance for foreground interaction
     return try {
       val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
       val pkg = context.packageName
@@ -82,11 +97,20 @@ internal object DevicePresence {
 
   private fun isLockScreen(context: Context): Boolean {
     return try {
+      val pm = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+      // If screen is not interactive (turned off), the device is locked/sleeping
+      if (!pm.isInteractive) {
+        return true
+      }
       val km = context.getSystemService(Context.KEYGUARD_SERVICE) as KeyguardManager
       if (km.isKeyguardLocked) {
         return true
       }
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1 && km.isDeviceLocked) {
+        return true
+      }
+      @Suppress("DEPRECATION")
+      if (km.inKeyguardRestrictedInputMode()) {
         return true
       }
       false
