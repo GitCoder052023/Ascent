@@ -138,6 +138,25 @@ export default function Index() {
           </Text>
         </View>
       </View>
+      <View style={styles.floorRow}>
+        <View style={[styles.floor, { flex: 1, paddingVertical: 10 }]}>
+          <Text style={{ fontSize: 10, color: "#8E8E93", fontWeight: "600" }}>
+            APP STATE
+          </Text>
+          <Text style={{ fontSize: 14, fontWeight: "700", color: "#1C1C1E", marginTop: 2 }}>
+            {logger.presence.appState}
+          </Text>
+        </View>
+        <View style={[styles.floor, { flex: 1, paddingVertical: 10 }]}>
+          <Text style={{ fontSize: 10, color: "#8E8E93", fontWeight: "600" }}>
+            LOCK SCREEN
+          </Text>
+          <Text style={{ fontSize: 14, fontWeight: "700", color: "#1C1C1E", marginTop: 2 }}>
+            {logger.presence.lockScreen}
+            {logger.presence.screenOn === "NO" ? " · SCREEN OFF" : ""}
+          </Text>
+        </View>
+      </View>
 
       <Pressable
         onPress={logger.recording ? logger.stop : () => void logger.start()}
@@ -159,7 +178,7 @@ export default function Index() {
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
-        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. Keep the IMU recording notification visible. On Android, IMU and connected Wi‑Fi are written by a native service; allow unrestricted battery and location all the time when prompted, and lock the app in Recents on aggressive OEMs. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
+        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. On Android, IMU plus connected Wi‑Fi (SSID, BSSID, RSSI dBm, frequency) are written every 2s in foreground, background, and on the lock screen. Each row includes appState, lockScreen, and screenOn. Keep the IMU recording notification visible, allow unrestricted battery and location all the time, and lock the app in Recents on aggressive OEMs. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
       </Text>
     </ScrollView>
   );
@@ -189,8 +208,16 @@ function ConnectionSection({ logger }: { logger: ReturnType<typeof useWifiLogger
       <InfoRow label="SSID" value={logger.wifi.ssid} />
       <InfoRow label="BSSID" value={logger.wifi.bssid} />
       <InfoRow
-        label={nativeAndroid ? "RSSI" : "RSSI"}
-        value={logger.wifi.signalStrength === null ? null : `${logger.wifi.signalStrength} dBm`}
+        label="RSSI"
+        value={
+          logger.wifi.signalStrength === null
+            ? null
+            : `${logger.wifi.signalStrength} ${logger.wifi.signalStrengthUnit ?? "dBm"}`
+        }
+      />
+      <InfoRow
+        label="Signal unit"
+        value={logger.wifi.signalStrengthUnit}
       />
       <InfoRow
         label="Frequency & Band"
@@ -226,21 +253,22 @@ function LatestMeasurement({ latest }: { latest: ReturnType<typeof useWifiLogger
           <InfoRow label="Time" value={new Date(latest.timestamp).toISOString()} />
           <InfoRow label="Floor" value={latest.floor.replaceAll("_", " ")} />
           <InfoRow label="SSID" value={latest.ssid} />
+          <InfoRow label="BSSID" value={latest.bssid} />
           <InfoRow
-            label="Signal"
+            label="RSSI"
             value={
-              latest.platform === "android"
-                ? latest.signalStrength === null
-                  ? null
-                  : `${latest.signalStrength} dBm`
-                : latest.signalStrengthEstimatedDbm !== null &&
-                    latest.signalStrengthEstimatedDbm !== undefined
-                  ? `${latest.signalStrengthEstimatedDbm} dBm (Est)`
-                  : latest.signalStrength === null
-                    ? null
-                    : `${latest.signalStrength} dBm`
+              latest.signalStrength === null
+                ? null
+                : `${latest.signalStrength} ${latest.signalStrengthUnit ?? "dBm"}`
             }
           />
+          <InfoRow label="Signal unit" value={latest.signalStrengthUnit} />
+          <InfoRow
+            label="Frequency"
+            value={latest.frequency === null ? null : `${latest.frequency} MHz`}
+          />
+          <InfoRow label="App state" value={latest.appState ?? null} />
+          <InfoRow label="Lock screen" value={latest.lockScreen ?? null} />
         </>
       ) : (
         <Text style={styles.empty}>No Wi-Fi measurements yet.</Text>

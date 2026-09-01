@@ -27,6 +27,9 @@ export type Measurement = {
   signalStrengthNormalized?: number | null;
   signalStrengthEstimatedDbm?: number | null;
   frequencyBand?: string | null;
+  appState?: "FOREGROUND" | "BACKGROUND" | null;
+  lockScreen?: "YES" | "NO" | "UNKNOWN" | null;
+  screenOn?: "YES" | "NO" | "UNKNOWN" | null;
 };
 
 const LEGACY_STORAGE_KEY = "wifi-floor-logger.measurements.v1";
@@ -61,7 +64,10 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
           os_version TEXT,
           signal_strength_normalized REAL,
           signal_strength_estimated_dbm REAL,
-          frequency_band TEXT
+          frequency_band TEXT,
+          app_state TEXT,
+          lock_screen TEXT,
+          screen_on TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_timestamp ON measurements(timestamp);
         CREATE INDEX IF NOT EXISTS idx_floor ON measurements(floor);
@@ -103,13 +109,17 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
           connection_type TEXT,
           platform TEXT,
           device_model TEXT,
-          os_version TEXT
+          os_version TEXT,
+          app_state TEXT,
+          lock_screen TEXT,
+          screen_on TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_raw_timestamp ON raw_observations(timestamp);
         CREATE INDEX IF NOT EXISTS idx_raw_session ON raw_observations(session_id);
         CREATE INDEX IF NOT EXISTS idx_raw_sensor ON raw_observations(sensor_type);
       `);
 
+      await migratePresenceColumns(db);
       await migrateLegacyWifiIntoRawObservations(db);
 
       // Attempt legacy migration from AsyncStorage
@@ -133,6 +143,24 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   return dbPromise;
 }
 
+async function migratePresenceColumns(db: SQLite.SQLiteDatabase) {
+  const statements = [
+    "ALTER TABLE raw_observations ADD COLUMN app_state TEXT",
+    "ALTER TABLE raw_observations ADD COLUMN lock_screen TEXT",
+    "ALTER TABLE raw_observations ADD COLUMN screen_on TEXT",
+    "ALTER TABLE measurements ADD COLUMN app_state TEXT",
+    "ALTER TABLE measurements ADD COLUMN lock_screen TEXT",
+    "ALTER TABLE measurements ADD COLUMN screen_on TEXT",
+  ];
+  for (const sql of statements) {
+    try {
+      await db.execAsync(sql);
+    } catch {
+      // Column already exists on upgraded databases.
+    }
+  }
+}
+
 async function migrateLegacyWifiIntoRawObservations(db: SQLite.SQLiteDatabase) {
   await db.runAsync(`
     INSERT OR IGNORE INTO raw_observations (
@@ -141,14 +169,14 @@ async function migrateLegacyWifiIntoRawObservations(db: SQLite.SQLiteDatabase) {
       accelerometer_x, accelerometer_y, accelerometer_z,
       gyroscope_x, gyroscope_y, gyroscope_z, barometer_pressure,
       ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
-      platform, device_model, os_version
+      platform, device_model, os_version, app_state, lock_screen, screen_on
     )
     SELECT
       id, NULL, timestamp, timestamp, NULL, 'arrival', 'wifi',
       floor, NULL, NULL,
       NULL, NULL, NULL, NULL, NULL, NULL, NULL,
       ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
-      platform, device_model, os_version
+      platform, device_model, os_version, NULL, NULL, NULL
     FROM measurements
   `);
 }
@@ -162,8 +190,9 @@ async function insertBatch(db: SQLite.SQLiteDatabase, items: Measurement[]) {
         `INSERT OR REPLACE INTO measurements (
           id, timestamp, floor, ssid, bssid, signal_strength, signal_strength_unit,
           frequency, connection_type, platform, device_model, os_version,
-          signal_strength_normalized, signal_strength_estimated_dbm, frequency_band
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          signal_strength_normalized, signal_strength_estimated_dbm, frequency_band,
+          app_state, lock_screen, screen_on
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           item.id,
           item.timestamp,
@@ -180,6 +209,9 @@ async function insertBatch(db: SQLite.SQLiteDatabase, items: Measurement[]) {
           item.signalStrengthNormalized ?? null,
           item.signalStrengthEstimatedDbm ?? null,
           item.frequencyBand ?? null,
+          item.appState ?? null,
+          item.lockScreen ?? null,
+          item.screenOn ?? null,
         ]
       );
     }
@@ -249,6 +281,9 @@ type DbRow = {
   signal_strength_normalized: number | null;
   signal_strength_estimated_dbm: number | null;
   frequency_band: string | null;
+  app_state: "FOREGROUND" | "BACKGROUND" | null;
+  lock_screen: "YES" | "NO" | "UNKNOWN" | null;
+  screen_on: "YES" | "NO" | "UNKNOWN" | null;
 };
 
 export async function getAllMeasurements(): Promise<Measurement[]> {
@@ -273,6 +308,9 @@ export async function getAllMeasurements(): Promise<Measurement[]> {
     signalStrengthNormalized: r.signal_strength_normalized,
     signalStrengthEstimatedDbm: r.signal_strength_estimated_dbm,
     frequencyBand: r.frequency_band,
+    appState: r.app_state,
+    lockScreen: r.lock_screen,
+    screenOn: r.screen_on,
   }));
 }
 
@@ -325,6 +363,9 @@ type RawDbRow = {
   platform: string;
   device_model: string | null;
   os_version: string | null;
+  app_state: RawObservation["appState"] | null;
+  lock_screen: RawObservation["lockScreen"] | null;
+  screen_on: RawObservation["screenOn"] | null;
 };
 
 function rowToObservation(r: RawDbRow): RawObservation {
@@ -355,6 +396,9 @@ function rowToObservation(r: RawDbRow): RawObservation {
     platform: r.platform,
     deviceModel: r.device_model,
     osVersion: r.os_version,
+    appState: r.app_state ?? "BACKGROUND",
+    lockScreen: r.lock_screen ?? "UNKNOWN",
+    screenOn: r.screen_on ?? "UNKNOWN",
   };
 }
 
@@ -369,8 +413,8 @@ async function insertRawBatch(db: SQLite.SQLiteDatabase, items: RawObservation[]
         accelerometer_x, accelerometer_y, accelerometer_z,
         gyroscope_x, gyroscope_y, gyroscope_z, barometer_pressure,
         ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
-        platform, device_model, os_version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        platform, device_model, os_version, app_state, lock_screen, screen_on
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     );
     try {
       for (const item of items) {
@@ -401,6 +445,9 @@ async function insertRawBatch(db: SQLite.SQLiteDatabase, items: RawObservation[]
           item.platform,
           item.deviceModel,
           item.osVersion,
+          item.appState,
+          item.lockScreen,
+          item.screenOn,
         ]);
       }
     } finally {

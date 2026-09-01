@@ -80,6 +80,7 @@ class RecordingImuService : Service(), SensorEventListener {
         stopSelf()
         return
       }
+      DevicePresence.ensureRegistered(this)
       writer = sqlite
       activeWriter = sqlite
       sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
@@ -148,7 +149,7 @@ class RecordingImuService : Service(), SensorEventListener {
         motionState = if (now - lastWalkAt < 6000L) "WALKING" else "STATIONARY"
         writer?.let { w ->
           w.labels = w.labels.copy(motionState = motionState)
-          w.enqueue(
+          enqueueSample(
             ImuSample("accelerometer", now, sensorTimestamp, x.toDouble(), y.toDouble(), z.toDouble(), null)
           )
         }
@@ -158,7 +159,7 @@ class RecordingImuService : Service(), SensorEventListener {
       Sensor.TYPE_GYROSCOPE -> {
         if (now - lastGyroAt < GYRO_INTERVAL_MS) return
         lastGyroAt = now
-        writer?.enqueue(
+        enqueueSample(
           ImuSample(
             "gyroscope",
             now,
@@ -177,7 +178,7 @@ class RecordingImuService : Service(), SensorEventListener {
         lastBaroAt = now
         val pressure = event.values[0].toDouble()
         if (!pressure.isFinite()) return
-        writer?.enqueue(ImuSample("barometer", now, sensorTimestamp, null, null, null, pressure))
+        enqueueSample(ImuSample("barometer", now, sensorTimestamp, null, null, null, pressure))
         lastBaroIso = iso(now)
         maybeEmit(now)
       }
@@ -223,9 +224,19 @@ class RecordingImuService : Service(), SensorEventListener {
   private val wifiTick = object : Runnable {
     override fun run() {
       sampleWifi()
-      val delay = if (motionState == "WALKING") WIFI_WALKING_INTERVAL_MS else WIFI_STATIONARY_INTERVAL_MS
-      wifiHandler?.postDelayed(this, delay)
+      wifiHandler?.postDelayed(this, WIFI_INTERVAL_MS)
     }
+  }
+
+  private fun enqueueSample(sample: ImuSample) {
+    val presence = DevicePresence.snapshot(this)
+    writer?.enqueue(
+      sample.copy(
+        appState = presence.appState,
+        lockScreen = presence.lockScreen,
+        screenOn = presence.screenOn,
+      )
+    )
   }
 
   private fun sampleWifi() {
@@ -235,19 +246,9 @@ class RecordingImuService : Service(), SensorEventListener {
     val snapshot = ConnectedWifi.read(this)
     lastWifi = snapshot
     val now = System.currentTimeMillis()
-    if (!snapshot.connected || snapshot.ssid == null) {
-      wifiSsidMismatch = false
-      emitUi(now)
-      return
-    }
     val lock = lockedSsid
-    if (!lock.isNullOrEmpty() && snapshot.ssid != lock) {
-      wifiSsidMismatch = true
-      emitUi(now)
-      return
-    }
-    wifiSsidMismatch = false
-    writer?.enqueue(
+    wifiSsidMismatch = !lock.isNullOrEmpty() && snapshot.ssid != null && snapshot.ssid != lock
+    enqueueSample(
       ImuSample(
         sensorType = "wifi",
         arrivalMs = now,
@@ -265,6 +266,7 @@ class RecordingImuService : Service(), SensorEventListener {
 
   private fun emitUi(now: Long) {
     val wifi = lastWifi
+    val presence = DevicePresence.snapshot(this)
     RecordingKeepaliveModule.emitLatest(
       lastAccelIso,
       lastGyroIso,
@@ -278,6 +280,9 @@ class RecordingImuService : Service(), SensorEventListener {
       wifi?.frequency,
       lastWifiIso,
       wifiSsidMismatch,
+      presence.appState,
+      presence.lockScreen,
+      presence.screenOn,
     )
   }
 
@@ -409,8 +414,7 @@ class RecordingImuService : Service(), SensorEventListener {
     const val EXTRA_OS_VERSION = "osVersion"
     const val EXTRA_LOCKED_SSID = "lockedSsid"
     const val ACCEL_INTERVAL_MS = 20L
-    const val WIFI_WALKING_INTERVAL_MS = 3000L
-    const val WIFI_STATIONARY_INTERVAL_MS = 30000L
+    const val WIFI_INTERVAL_MS = 2000L
     const val GYRO_INTERVAL_MS = 20L
     const val BARO_INTERVAL_MS = 200L
     private const val NOTIFICATION_ID = 481757

@@ -16,7 +16,7 @@ import {
 export const WIFI_LOGGER_BACKGROUND_TASK = "wifi-logger-background-task";
 export { KEY_ACTIVE_FLOOR };
 
-const MIN_BACKGROUND_SAMPLE_MS = 3000;
+const MIN_BACKGROUND_SAMPLE_MS = 2000;
 const SAMPLE_IN_FLIGHT_TIMEOUT_MS = 30000;
 
 let activeFloor: Floor = "FLOOR_1";
@@ -53,10 +53,6 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
     await ensureImuCollectorAlive().catch(() => {});
 
     const wifi = await getConnectedWifi();
-    if (wifi.connectionState !== "CONNECTED" || !wifi.ssid) {
-      return;
-    }
-
     let isMoving = false;
 
     if (data && typeof data === "object" && "locations" in data && Array.isArray((data as any).locations)) {

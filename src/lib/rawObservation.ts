@@ -1,3 +1,4 @@
+import { getDevicePresence } from "./devicePresence";
 import type {
   ActivityLabel,
   Floor,
@@ -69,6 +70,7 @@ function baseObservation(
     platform: device.platform,
     deviceModel: device.deviceModel,
     osVersion: device.osVersion,
+    ...getDevicePresence(),
   };
 }
 

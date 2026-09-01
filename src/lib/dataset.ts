@@ -1,5 +1,6 @@
 import * as Device from "expo-device";
 import { Platform } from "react-native";
+import { getDevicePresence } from "./devicePresence";
 import type { WifiSnapshot } from "./wifi";
 import type { ProcessedSignal } from "./signalEngine";
 import {
@@ -53,6 +54,7 @@ export function createMeasurement(
     signalStrengthNormalized: processedSignal?.normalizedScore ?? null,
     signalStrengthEstimatedDbm: processedSignal?.estimatedDbm ?? null,
     frequencyBand: processedSignal?.frequencyBand ?? null,
+    ...getDevicePresence(),
   };
   return item;
 }
@@ -85,6 +87,11 @@ export async function persistWifiMeasurement(
     device,
     item.id
   );
+  if (item.appState) {
+    raw.appState = item.appState;
+    raw.lockScreen = item.lockScreen ?? raw.lockScreen;
+    raw.screenOn = item.screenOn ?? raw.screenOn;
+  }
   await Promise.all([saveMeasurementBuffered(item), saveRawObservationBuffered(raw)]);
 }
 

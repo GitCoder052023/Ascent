@@ -25,6 +25,9 @@ internal data class ImuSample(
   val bssid: String? = null,
   val rssi: Double? = null,
   val frequency: Int? = null,
+  val appState: String? = null,
+  val lockScreen: String? = null,
+  val screenOn: String? = null,
 )
 
 internal data class RecordingLabels(
@@ -68,6 +71,7 @@ internal class ImuSqliteWriter(context: Context) {
       opened.execSQL("PRAGMA busy_timeout = 8000")
       opened.execSQL(CREATE_RAW)
       opened.execSQL(CREATE_MEASUREMENTS)
+      migratePresenceColumns(opened)
       insertRaw = opened.compileStatement(INSERT_RAW)
       insertMeasurement = opened.compileStatement(INSERT_MEASUREMENT)
       db = opened
@@ -232,6 +236,9 @@ internal class ImuSqliteWriter(context: Context) {
     statement.bindString(24, "android")
     bindText(statement, 25, snap.deviceModel)
     bindText(statement, 26, snap.osVersion)
+    bindText(statement, 27, sample.appState)
+    bindText(statement, 28, sample.lockScreen)
+    bindText(statement, 29, sample.screenOn)
   }
 
   private fun bindMeasurement(
@@ -260,6 +267,9 @@ internal class ImuSqliteWriter(context: Context) {
     bindDouble(statement, 13, score)
     bindDouble(statement, 14, sample.rssi)
     bindText(statement, 15, band)
+    bindText(statement, 16, sample.appState)
+    bindText(statement, 17, sample.lockScreen)
+    bindText(statement, 18, sample.screenOn)
   }
 
   private fun bindText(statement: SQLiteStatement, index: Int, value: String?) {
@@ -301,7 +311,10 @@ internal class ImuSqliteWriter(context: Context) {
         connection_type TEXT,
         platform TEXT,
         device_model TEXT,
-        os_version TEXT
+        os_version TEXT,
+        app_state TEXT,
+        lock_screen TEXT,
+        screen_on TEXT
       )
     """
     private const val CREATE_MEASUREMENTS = """
@@ -320,7 +333,10 @@ internal class ImuSqliteWriter(context: Context) {
         os_version TEXT,
         signal_strength_normalized REAL,
         signal_strength_estimated_dbm REAL,
-        frequency_band TEXT
+        frequency_band TEXT,
+        app_state TEXT,
+        lock_screen TEXT,
+        screen_on TEXT
       )
     """
     private const val INSERT_RAW = """
@@ -330,15 +346,34 @@ internal class ImuSqliteWriter(context: Context) {
         accelerometer_x, accelerometer_y, accelerometer_z,
         gyroscope_x, gyroscope_y, gyroscope_z, barometer_pressure,
         ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
-        platform, device_model, os_version
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        platform, device_model, os_version, app_state, lock_screen, screen_on
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
     private const val INSERT_MEASUREMENT = """
       INSERT OR REPLACE INTO measurements (
         id, timestamp, floor, ssid, bssid, signal_strength, signal_strength_unit,
         frequency, connection_type, platform, device_model, os_version,
-        signal_strength_normalized, signal_strength_estimated_dbm, frequency_band
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        signal_strength_normalized, signal_strength_estimated_dbm, frequency_band,
+        app_state, lock_screen, screen_on
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
+
+    private fun migratePresenceColumns(database: SQLiteDatabase) {
+      val statements = arrayOf(
+        "ALTER TABLE raw_observations ADD COLUMN app_state TEXT",
+        "ALTER TABLE raw_observations ADD COLUMN lock_screen TEXT",
+        "ALTER TABLE raw_observations ADD COLUMN screen_on TEXT",
+        "ALTER TABLE measurements ADD COLUMN app_state TEXT",
+        "ALTER TABLE measurements ADD COLUMN lock_screen TEXT",
+        "ALTER TABLE measurements ADD COLUMN screen_on TEXT",
+      )
+      for (sql in statements) {
+        try {
+          database.execSQL(sql)
+        } catch (_: Exception) {
+          // Column already exists on upgraded databases.
+        }
+      }
+    }
   }
 }

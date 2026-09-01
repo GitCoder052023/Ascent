@@ -87,7 +87,6 @@ export function useMotionDetector({
   }, [enabled, ownUpdateInterval]);
 
   const motionState: MotionState = isMoving ? "WALKING" : "STATIONARY";
-  // 3s interval when walking, 30s interval when stationary
   const sampleIntervalMs = isMoving ? 3000 : 30000;
 
   return {

@@ -19,6 +19,10 @@ class RecordingKeepaliveModule : Module() {
 
     OnCreate {
       instance = WeakReference(this@RecordingKeepaliveModule)
+      val ctx = appContext.reactContext ?: appContext.currentActivity
+      if (ctx != null) {
+        DevicePresence.ensureRegistered(ctx, appContext.currentActivity)
+      }
     }
 
     OnDestroy {
@@ -108,6 +112,16 @@ class RecordingKeepaliveModule : Module() {
       RecordingImuService.probe(ctx)
     }
 
+    Function("presence") {
+      val ctx = appContext.reactContext ?: appContext.currentActivity ?: return@Function mapOf(
+        "appState" to "BACKGROUND",
+        "lockScreen" to "UNKNOWN",
+        "screenOn" to "UNKNOWN",
+      )
+      DevicePresence.ensureRegistered(ctx, appContext.currentActivity)
+      DevicePresence.asMap(ctx)
+    }
+
     Function("rawCount") {
       RecordingImuService.activeWriter?.observationCount() ?: -1L
     }
@@ -140,6 +154,7 @@ class RecordingKeepaliveModule : Module() {
 
   private fun startImu(options: Map<String, String?>): Boolean {
     val ctx = appContext.reactContext ?: appContext.currentActivity ?: return false
+    DevicePresence.ensureRegistered(ctx, appContext.currentActivity)
     return RecordingImuService.start(ctx.applicationContext, options)
   }
 
@@ -165,6 +180,9 @@ class RecordingKeepaliveModule : Module() {
       wifiFrequency: Int? = null,
       wifiTimestamp: String? = null,
       wifiSsidMismatch: Boolean = false,
+      appState: String? = null,
+      lockScreen: String? = null,
+      screenOn: String? = null,
     ) {
       instance?.get()?.sendEvent(
         "onLatest",
@@ -181,6 +199,9 @@ class RecordingKeepaliveModule : Module() {
           "wifiFrequency" to wifiFrequency,
           "wifiTimestamp" to wifiTimestamp,
           "wifiSsidMismatch" to wifiSsidMismatch,
+          "appState" to appState,
+          "lockScreen" to lockScreen,
+          "screenOn" to screenOn,
         )
       )
     }

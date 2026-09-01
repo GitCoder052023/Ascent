@@ -17,7 +17,9 @@ import {
   type Measurement,
 } from "../lib/dataset";
 import { getConnectedWifi, processWifiSignal, type WifiSnapshot } from "../lib/wifi";
-import { EMPTY_WIFI } from "../constants/app";
+import { nativeAndroidSignal } from "../lib/signalEngine";
+import { EMPTY_WIFI, WIFI_SAMPLE_INTERVAL_MS } from "../constants/app";
+import { getDevicePresence, type DevicePresence } from "../lib/devicePresence";
 import { useMotionDetector } from "./useMotionDetector";
 import {
   startBackgroundLoggingAsync,
@@ -90,6 +92,7 @@ export function useWifiLogger() {
   const [network, setNetwork] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
+  const [presence, setPresence] = useState<DevicePresence>(getDevicePresence);
   const [lastProcessed, setLastProcessed] = useState<{
     normalizedScore: number | null;
     estimatedDbm: number | null;
@@ -174,6 +177,7 @@ export function useWifiLogger() {
   useEffect(() => {
     const clock = setInterval(() => {
       void getRawObservationCount().then(setRawCount).catch(() => {});
+      setPresence(getDevicePresence());
     }, 1000);
     return () => clearInterval(clock);
   }, [recording]);
@@ -239,6 +243,17 @@ export function useWifiLogger() {
       return;
     }
     return subscribeNativeImuLatest((event) => {
+      if (event.appState || event.lockScreen || event.screenOn) {
+        setPresence({
+          appState: event.appState === "FOREGROUND" ? "FOREGROUND" : "BACKGROUND",
+          lockScreen:
+            event.lockScreen === "YES" || event.lockScreen === "NO"
+              ? event.lockScreen
+              : "UNKNOWN",
+          screenOn:
+            event.screenOn === "YES" || event.screenOn === "NO" ? event.screenOn : "UNKNOWN",
+        });
+      }
       if (!event.wifiConnectionState) {
         return;
       }
@@ -255,7 +270,7 @@ export function useWifiLogger() {
       if (event.wifiSsidMismatch) {
         setPaused(true);
         setNotice(
-          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${event.wifiSsid}. Wi-Fi sampling paused; IMU recording continues.`
+          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${event.wifiSsid}. IMU and Wi-Fi rows still record.`
         );
       }
     });
@@ -273,18 +288,18 @@ export function useWifiLogger() {
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (!recording || paused || nativeCapture) {
+    if (!recording || nativeCapture) {
       return;
     }
 
-    interval.current = setInterval(() => void sample(), sampleIntervalMs);
+    interval.current = setInterval(() => void sample(), WIFI_SAMPLE_INTERVAL_MS);
 
     return () => {
       if (interval.current) {
         clearInterval(interval.current);
       }
     };
-  }, [recording, paused, floor, network, sampleIntervalMs, nativeCapture]);
+  }, [recording, floor, network, nativeCapture]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   async function refresh() {
@@ -425,23 +440,18 @@ export function useWifiLogger() {
       const current = await getConnectedWifi();
       setWifi(current);
 
-      if (current.connectionState !== "CONNECTED" || !current.ssid) {
-        return;
-      }
-
-      if (network && current.ssid !== network) {
+      if (network && current.ssid && current.ssid !== network) {
         setPaused(true);
         setNotice(
-          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${current.ssid}. Wi-Fi sampling paused; IMU recording continues.`
+          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${current.ssid}. IMU and Wi-Fi rows still record.`
         );
-        return;
       }
 
       const processed = processWifiSignal(current, isMoving);
       setLastProcessed(processed);
 
       const item = createMeasurement(floor, current, processed);
-      const key = `${item.timestamp.slice(0, 19)}-${item.ssid}-${item.floor}`;
+      const key = `${item.timestamp.slice(0, 19)}-${item.ssid}-${item.bssid}-${item.signalStrength}-${item.floor}`;
 
       if (key === lastSampleKey.current) {
         return;
@@ -553,7 +563,7 @@ export function useWifiLogger() {
 
       setNotice(backgroundNotice);
 
-      if (!isUsingNativeImu() && current.connectionState === "CONNECTED" && current.ssid) {
+      if (!isUsingNativeImu()) {
         await sample();
       }
     } catch (e) {
@@ -633,10 +643,11 @@ export function useWifiLogger() {
     motionState,
     notice,
     paused,
+    presence,
     rawCount,
     recording,
     resume,
-    sampleIntervalMs,
+    sampleIntervalMs: recording ? WIFI_SAMPLE_INTERVAL_MS : sampleIntervalMs,
     seconds,
     sessionId,
     setActivity,

@@ -1,6 +1,7 @@
 import type { WifiSnapshot } from "../lib/wifi";
 
 export const SAMPLE_MS = 25_000;
+export const WIFI_SAMPLE_INTERVAL_MS = 2000;
 
 export const EMPTY_WIFI: WifiSnapshot = {
   connectionState: "UNKNOWN",

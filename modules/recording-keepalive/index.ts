@@ -14,6 +14,9 @@ export type NativeLatestEvent = {
   wifiFrequency?: number | null;
   wifiTimestamp?: string | null;
   wifiSsidMismatch?: boolean;
+  appState?: string | null;
+  lockScreen?: string | null;
+  screenOn?: string | null;
 };
 
 export type NativeRecordingOptions = {
@@ -43,6 +46,11 @@ type RecordingKeepaliveNative = {
   updateLabels: (options: Record<string, string | null | undefined>) => boolean;
   stopRecording: () => Promise<boolean>;
   rawCount: () => number;
+  presence: () => {
+    appState: string;
+    lockScreen: string;
+    screenOn: string;
+  };
   flushWrites: () => Promise<boolean>;
   addListener: (
     event: "onLatest",
@@ -183,6 +191,31 @@ export function updateNativeImuLabels(options: NativeRecordingOptions): boolean 
     return native.updateLabels(compactOptions(options));
   } catch {
     return false;
+  }
+}
+
+export function nativeDevicePresence(): {
+  appState: "FOREGROUND" | "BACKGROUND";
+  lockScreen: "YES" | "NO" | "UNKNOWN";
+  screenOn: "YES" | "NO" | "UNKNOWN";
+} | null {
+  if (!isNativeImuAvailable() || !native) {
+    return null;
+  }
+  try {
+    const value = native.presence();
+    const appState = value.appState === "FOREGROUND" ? "FOREGROUND" : "BACKGROUND";
+    const lockScreen =
+      value.lockScreen === "YES" || value.lockScreen === "NO" || value.lockScreen === "UNKNOWN"
+        ? value.lockScreen
+        : "UNKNOWN";
+    const screenOn =
+      value.screenOn === "YES" || value.screenOn === "NO" || value.screenOn === "UNKNOWN"
+        ? value.screenOn
+        : "UNKNOWN";
+    return { appState, lockScreen, screenOn };
+  } catch {
+    return null;
   }
 }
 
