@@ -57,6 +57,10 @@ class RecordingImuService : Service(), SensorEventListener {
   private var lastWifi: ConnectedWifiSnapshot? = null
   private var lastWifiIso: String? = null
   private var wifiSsidMismatch = false
+  private var wifiHandlerThread: HandlerThread? = null
+  private val lastPresence = AtomicReference(
+    PresenceSnapshot("FOREGROUND", "NO", "YES")
+  )
 
   private val isoLock = Any()
   private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -94,9 +98,13 @@ class RecordingImuService : Service(), SensorEventListener {
       accel?.let { registerSensor(it, handler) }
       gyro?.let { registerSensor(it, handler) }
       baro?.let { registerSensor(it, handler) }
-      wifiHandler = handler
+      // Wi-Fi gets its own thread so ticks are never blocked by sensor
+      // batch processing and presence snapshots stay independent.
+      val wThread = HandlerThread("ascent-wifi").also { it.start() }
+      wifiHandlerThread = wThread
+      wifiHandler = Handler(wThread.looper)
       wifiScheduled = true
-      handler.post(wifiTick)
+      wifiHandler?.post(wifiTick)
       running = true
       signalStart(true)
     } catch (_: Exception) {
@@ -224,13 +232,17 @@ class RecordingImuService : Service(), SensorEventListener {
 
   private val wifiTick = object : Runnable {
     override fun run() {
+      // Refresh cached presence on every tick (every 2s). This is the
+      // heartbeat that keeps presence accurate even when sensor delivery
+      // is batched or paused by the HAL.
+      lastPresence.set(DevicePresence.snapshot(this@RecordingImuService))
       sampleWifi()
       wifiHandler?.postDelayed(this, WIFI_INTERVAL_MS)
     }
   }
 
   private fun enqueueSample(sample: ImuSample) {
-    val presence = DevicePresence.snapshot(this)
+    val presence = lastPresence.get()
     writer?.enqueue(
       sample.copy(
         appState = presence.appState,
@@ -267,7 +279,7 @@ class RecordingImuService : Service(), SensorEventListener {
 
   private fun emitUi(now: Long) {
     val wifi = lastWifi
-    val presence = DevicePresence.snapshot(this)
+    val presence = lastPresence.get()
     RecordingKeepaliveModule.emitLatest(
       lastAccelIso,
       lastGyroIso,
@@ -365,7 +377,12 @@ class RecordingImuService : Service(), SensorEventListener {
     )
     for (delay in delays) {
       try {
-        val ok = sensorManager?.registerListener(this, sensor, delay, 0, handler) == true
+        // maxReportLatencyUs = 5s: allow the HAL to batch events in its
+        // hardware FIFO instead of demanding immediate delivery (0), which
+        // fails when the AP sleeps with the screen off.
+        val ok = sensorManager?.registerListener(
+          this, sensor, delay, MAX_REPORT_LATENCY_US, handler
+        ) == true
         if (ok) {
           return
         }
@@ -387,6 +404,8 @@ class RecordingImuService : Service(), SensorEventListener {
       wifiHandler?.removeCallbacks(wifiTick)
       wifiHandler = null
       wifiScheduled = false
+      wifiHandlerThread?.quitSafely()
+      wifiHandlerThread = null
       sensorManager?.unregisterListener(this)
       sensorThread?.quitSafely()
       sensorThread = null
@@ -422,6 +441,7 @@ class RecordingImuService : Service(), SensorEventListener {
     const val WIFI_INTERVAL_MS = 2000L
     const val GYRO_INTERVAL_MS = 20L
     const val BARO_INTERVAL_MS = 200L
+    const val MAX_REPORT_LATENCY_US = 5_000_000 // 5 seconds of HAL-side batching
     private const val NOTIFICATION_ID = 481757
 
     @Volatile var running = false

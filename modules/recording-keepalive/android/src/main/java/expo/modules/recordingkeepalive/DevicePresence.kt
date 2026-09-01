@@ -1,7 +1,6 @@
 package expo.modules.recordingkeepalive
 
 import android.app.Activity
-import android.app.ActivityManager
 import android.app.Application
 import android.app.KeyguardManager
 import android.content.Context
@@ -78,21 +77,11 @@ internal object DevicePresence {
     if (isLockScreen(context)) {
       return false
     }
-    // Direct check: is at least one activity currently resumed/active?
-    if (resumedActivityIds.isNotEmpty()) {
-      return true
-    }
-    // Fallback: check process importance for foreground interaction
-    return try {
-      val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-      val pkg = context.packageName
-      am.runningAppProcesses.orEmpty().any { process ->
-        process.processName == pkg &&
-          process.importance == ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
-      }
-    } catch (_: Exception) {
-      false
-    }
+    // Only use the direct activity-resumed check. The RunningAppProcessInfo
+    // fallback was wrong because processes running a foreground service always
+    // have IMPORTANCE_FOREGROUND, making it return true even when the user is
+    // in another app or on the lock screen.
+    return resumedActivityIds.isNotEmpty()
   }
 
   private fun isLockScreen(context: Context): Boolean {

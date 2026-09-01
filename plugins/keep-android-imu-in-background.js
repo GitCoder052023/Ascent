@@ -66,7 +66,7 @@ const PATCHED_DELAY = `  private val samplingPeriodUs: Int
 
 const STOCK_REGISTER = `      mSensorManager.registerListener(this, mSensor, samplingPeriodUs)`;
 
-const PATCHED_REGISTER = `      mSensorManager.registerListener(this, mSensor, samplingPeriodUs, 0)`;
+const PATCHED_REGISTER = `      mSensorManager.registerListener(this, mSensor, samplingPeriodUs, 5000000)`;
 
 const STOCK_LOCATION_DEFER = `    // Foreground: report immediately for responsive UI (matches iOS behavior)
     if (!mIsHostPaused) {
@@ -145,7 +145,7 @@ function patchExpoSensors(projectRoot) {
     subscription,
     STOCK_REGISTER,
     PATCHED_REGISTER,
-    "samplingPeriodUs, 0)"
+    "samplingPeriodUs, 5000000)"
   );
 }
 
