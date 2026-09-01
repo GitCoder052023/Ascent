@@ -110,6 +110,7 @@ export function useWifiLogger() {
   });
   const interval = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastSampleKey = useRef<string | null>(null);
+  const startingRef = useRef(false);
   const rawCollector = useRawSensorCollector();
 
   function setFloor(next: Floor) {
@@ -163,7 +164,9 @@ export function useWifiLogger() {
       void flushRawWriteBuffer();
       if (active) {
         void refresh();
-        void loadMeasurements().then(setItems);
+        if (!isNativeImuRecording()) {
+          void loadMeasurements().then(setItems).catch(() => {});
+        }
         void getRawObservationCount().then(setRawCount);
         void restoreRecordingIfNeeded();
       }
@@ -278,8 +281,8 @@ export function useWifiLogger() {
       return;
     }
     const clock = setInterval(() => {
-      void loadMeasurements().then(setItems).catch(() => {});
-    }, 2000);
+      void getRawObservationCount().then(setRawCount).catch(() => {});
+    }, 1000);
     return () => clearInterval(clock);
   }, [recording, nativeCapture]);
 
@@ -464,8 +467,30 @@ export function useWifiLogger() {
     }
   }
 
+  async function abortFailedStart() {
+    setRecording(false);
+    setPaused(false);
+    setCachedRecording(false);
+    setNativeCapture(false);
+    await stopImuCollector().catch(() => {});
+    await AsyncStorage.removeItem(KEY_STARTED).catch(() => {});
+    setCachedLockedSsid(null);
+    setNetwork(null);
+    setCachedSessionId(null);
+    setSessionId(null);
+    setStarted(null);
+    setSeconds(0);
+  }
+
   async function start() {
+    if (recording || startingRef.current) {
+      return;
+    }
+    startingRef.current = true;
     try {
+      if (isNativeImuRecording() || isImuCollectorRunning()) {
+        await stopImuCollector().catch(() => {});
+      }
       if (!(await requestPermission())) {
         return;
       }
@@ -503,7 +528,6 @@ export function useWifiLogger() {
       setStarted(now);
       setSeconds(0);
       setPaused(false);
-      setRecording(true);
 
       await AsyncStorage.setItem(KEY_STARTED, String(now));
       if (current.connectionState === "CONNECTED" && current.ssid) {
@@ -516,6 +540,7 @@ export function useWifiLogger() {
 
       await startImuCollector(DEVICE_META);
       setNativeCapture(isUsingNativeImu());
+      setRecording(true);
 
       let backgroundNotice: string | null = null;
       if (Platform.OS === "android") {
@@ -555,7 +580,10 @@ export function useWifiLogger() {
       }
     } catch (e) {
       console.warn("Could not start recording:", e);
+      await abortFailedStart();
       setNotice("Recording could not start. Try again.");
+    } finally {
+      startingRef.current = false;
     }
   }
 
@@ -580,6 +608,12 @@ export function useWifiLogger() {
     }
     setCachedSessionId(null);
     setSessionId(null);
+    try {
+      const measurements = await loadMeasurements();
+      setItems(measurements);
+    } catch {
+      // Keep the in-memory list if the reload fails.
+    }
     const count = await getRawObservationCount().catch(() => rawCount);
     setRawCount(count);
     setNotice("Recording stopped. Your dataset remains stored on this device.");

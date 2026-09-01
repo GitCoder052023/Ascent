@@ -123,7 +123,8 @@ class RecordingKeepaliveModule : Module() {
     }
 
     Function("rawCount") {
-      RecordingImuService.activeWriter?.observationCount() ?: -1L
+      val count = RecordingImuService.activeWriter?.observationCount()
+      if (count != null && count >= 0L) count else 0L
     }
 
     AsyncFunction("flushWrites") {
@@ -159,9 +160,8 @@ class RecordingKeepaliveModule : Module() {
   }
 
   private fun stopImu(): Boolean {
-    val ctx = appContext.reactContext ?: appContext.currentActivity ?: return false
-    RecordingImuService.stop(ctx.applicationContext)
-    return true
+    val ctx = appContext.reactContext ?: appContext.currentActivity ?: return true
+    return RecordingImuService.stop(ctx.applicationContext)
   }
 
   companion object {

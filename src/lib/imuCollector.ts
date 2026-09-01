@@ -12,7 +12,12 @@ import {
   subscribeNativeImuLatest,
   updateNativeImuLabels,
 } from "../../modules/recording-keepalive";
-import { flushRawWriteBuffer, saveRawObservationBuffered } from "./db";
+import {
+  closeJsDatabase,
+  flushRawWriteBuffer,
+  saveRawObservationBuffered,
+  setNativeOwnsDatabase,
+} from "./db";
 import {
   createAccelerometerObservation,
   createBarometerObservation,
@@ -209,6 +214,8 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
 
   if (isNativeImuAvailable()) {
     const labels = getCachedLabels();
+    setNativeOwnsDatabase(true);
+    await closeJsDatabase();
     const started = await startNativeImuRecording({
       sessionId: labels.sessionId,
       floor: labels.floor,
@@ -224,6 +231,8 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
       ensureNativeLatestSubscription();
       return available;
     }
+    await stopNativeImuRecording().catch(() => {});
+    setNativeOwnsDatabase(false);
   }
 
   usingNativeImu = false;
@@ -372,6 +381,7 @@ export async function stopImuCollector(): Promise<void> {
   } catch {
     // Ignore.
   }
+  setNativeOwnsDatabase(false);
   try {
     releaseCpuWakeLock();
   } catch {

@@ -67,6 +67,7 @@ class RecordingImuService : Service(), SensorEventListener {
 
   override fun onCreate() {
     super.onCreate()
+    stopping = false
     enterForeground()
     try {
       val pm = getSystemService(POWER_SERVICE) as PowerManager
@@ -382,26 +383,30 @@ class RecordingImuService : Service(), SensorEventListener {
     }
     stopping = true
     running = false
-    wifiHandler?.removeCallbacks(wifiTick)
-    wifiHandler = null
-    wifiScheduled = false
-    sensorManager?.unregisterListener(this)
-    sensorThread?.quitSafely()
-    sensorThread = null
-    writer?.stop()
-    writer = null
-    activeWriter = null
-    writerReady = false
-    if (wakeLock?.isHeld == true) {
-      wakeLock?.release()
-    }
-    wakeLock = null
     try {
-      stopForeground(STOP_FOREGROUND_REMOVE)
-    } catch (_: Exception) {
-      // Ignore.
+      wifiHandler?.removeCallbacks(wifiTick)
+      wifiHandler = null
+      wifiScheduled = false
+      sensorManager?.unregisterListener(this)
+      sensorThread?.quitSafely()
+      sensorThread = null
+      writer?.stop()
+      writer = null
+      activeWriter = null
+      writerReady = false
+      if (wakeLock?.isHeld == true) {
+        wakeLock?.release()
+      }
+      wakeLock = null
+      try {
+        stopForeground(STOP_FOREGROUND_REMOVE)
+      } catch (_: Exception) {
+        // Ignore.
+      }
+      stopSelf()
+    } finally {
+      stopLatch.getAndSet(null)?.countDown()
     }
-    stopSelf()
   }
 
   companion object {
@@ -426,6 +431,7 @@ class RecordingImuService : Service(), SensorEventListener {
     @Volatile var lastSampleAtElapsed = 0L
     @Volatile internal var activeWriter: ImuSqliteWriter? = null
     private val startLatch = AtomicReference<CountDownLatch?>(null)
+    private val stopLatch = AtomicReference<CountDownLatch?>(null)
 
     fun start(context: Context, options: Map<String, String?>): Boolean {
       val intent = labeledIntent(context, options)
@@ -446,9 +452,6 @@ class RecordingImuService : Service(), SensorEventListener {
         startLatch.set(null)
         return false
       }
-      if (Looper.myLooper() == Looper.getMainLooper()) {
-        return true
-      }
       return try {
         latch.await(8, TimeUnit.SECONDS) && writerReady
       } catch (_: InterruptedException) {
@@ -463,9 +466,27 @@ class RecordingImuService : Service(), SensorEventListener {
       context.startService(labeledIntent(context, options))
     }
 
-    fun stop(context: Context) {
-      val intent = Intent(context, RecordingImuService::class.java).setAction(ACTION_STOP)
-      context.startService(intent)
+    fun stop(context: Context): Boolean {
+      if (!running && activeWriter == null) {
+        return true
+      }
+      val latch = CountDownLatch(1)
+      stopLatch.set(latch)
+      try {
+        context.startService(Intent(context, RecordingImuService::class.java).setAction(ACTION_STOP))
+      } catch (_: Exception) {
+        running = false
+        writerReady = false
+        activeWriter = null
+        stopLatch.set(null)
+        return true
+      }
+      return try {
+        latch.await(8, TimeUnit.SECONDS)
+        !running && activeWriter == null
+      } catch (_: InterruptedException) {
+        !running
+      }
     }
 
     fun probe(context: Context): Map<String, Boolean> {

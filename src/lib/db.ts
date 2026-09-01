@@ -1,6 +1,7 @@
 import * as SQLite from "expo-sqlite";
 import {
   flushNativeImuWrites,
+  isNativeImuRecording,
   nativeRawObservationCount,
 } from "../../modules/recording-keepalive";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -36,6 +37,7 @@ const LEGACY_STORAGE_KEY = "wifi-floor-logger.measurements.v1";
 const DB_NAME = "wifilogger_v2.db";
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
+let nativeOwnsDatabase = false;
 let writeBuffer: Measurement[] = [];
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 let activeFlushPromise: Promise<void> | null = null;
@@ -43,7 +45,34 @@ let rawWriteBuffer: RawObservation[] = [];
 let rawFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let activeRawFlushPromise: Promise<void> | null = null;
 
+export function setNativeOwnsDatabase(owns: boolean) {
+  nativeOwnsDatabase = owns;
+}
+
+export function isNativeOwningDatabase(): boolean {
+  return nativeOwnsDatabase;
+}
+
+export async function closeJsDatabase(): Promise<void> {
+  await flushWriteBuffer();
+  await flushRawWriteBuffer();
+  const pending = dbPromise;
+  dbPromise = null;
+  if (!pending) {
+    return;
+  }
+  try {
+    const db = await pending;
+    await db.closeAsync();
+  } catch {
+    // Already closed or never opened.
+  }
+}
+
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
+  if (nativeOwnsDatabase) {
+    throw new Error("NATIVE_DB_OWNER");
+  }
   if (!dbPromise) {
     dbPromise = (async () => {
       const db = await SQLite.openDatabaseAsync(DB_NAME);
@@ -518,6 +547,13 @@ export async function getAllRawObservations(): Promise<RawObservation[]> {
 
 export async function getRawObservationCount(): Promise<number> {
   const nativeCount = nativeRawObservationCount();
+  if (nativeOwnsDatabase || isNativeImuRecording()) {
+    if (nativeCount != null && nativeCount >= 0) {
+      cachedRawDbCount = Math.max(cachedRawDbCount ?? 0, nativeCount);
+      return nativeCount + rawWriteBuffer.length;
+    }
+    return (cachedRawDbCount ?? 0) + rawWriteBuffer.length;
+  }
   const db = await getDatabase();
   const row = await db.getFirstAsync<{ count: number }>(
     "SELECT COUNT(*) as count FROM raw_observations"

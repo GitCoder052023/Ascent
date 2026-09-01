@@ -112,15 +112,16 @@ internal class ImuSqliteWriter(context: Context) {
   }
 
   fun observationCount(): Long {
-    val database = db ?: return -1L
+    val queued = queue.size.toLong()
+    val database = db ?: return queued
     val flushed = try {
       database.rawQuery("SELECT COUNT(*) FROM raw_observations", null).use { cursor ->
         if (cursor.moveToFirst()) cursor.getLong(0) else 0L
       }
     } catch (_: Exception) {
-      return -1L
+      return queued
     }
-    return flushed + queue.size
+    return flushed + queued
   }
 
   fun checkpoint(mode: String = "PASSIVE") {
