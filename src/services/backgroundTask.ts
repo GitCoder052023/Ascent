@@ -107,6 +107,10 @@ TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
 export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean> {
   setBackgroundFloor(floor);
 
+  if (Platform.OS === "android") {
+    return false;
+  }
+
   try {
     let fgStatus = (await Location.getForegroundPermissionsAsync()).status;
     if (fgStatus !== "granted") {
@@ -116,27 +120,21 @@ export async function startBackgroundLoggingAsync(floor: Floor): Promise<boolean
       return false;
     }
 
-    if (Platform.OS !== "android") {
-      let bgStatus = (await Location.getBackgroundPermissionsAsync()).status;
-      if (bgStatus !== "granted") {
-        bgStatus = (await Location.requestBackgroundPermissionsAsync()).status;
-      }
-      if (bgStatus !== "granted") {
-        return false;
-      }
+    let bgStatus = (await Location.getBackgroundPermissionsAsync()).status;
+    if (bgStatus !== "granted") {
+      bgStatus = (await Location.requestBackgroundPermissionsAsync()).status;
+    }
+    if (bgStatus !== "granted") {
+      return false;
     }
 
     const alreadyRunning = await TaskManager.isTaskRegisteredAsync(
       WIFI_LOGGER_BACKGROUND_TASK
     );
     if (!alreadyRunning) {
-      // GPS is only a keep-alive / wakeup for the foreground service.
-      // High accuracy + 1 m / frequent updates caused Android to schedule a
-      // JobScheduler task on every indoor GPS jump while the Activity was
-      // visible, which killed and restarted the UI in a loop.
       await Location.startLocationUpdatesAsync(WIFI_LOGGER_BACKGROUND_TASK, {
         accuracy: Location.Accuracy.Balanced,
-        distanceInterval: Platform.OS === "android" ? 25 : 10,
+        distanceInterval: 10,
         timeInterval: 15000,
         deferredUpdatesInterval: 15000,
         deferredUpdatesDistance: 25,

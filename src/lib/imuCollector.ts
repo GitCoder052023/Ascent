@@ -32,12 +32,14 @@ export type LatestRaw = {
   accelerometer: string | null;
   gyroscope: string | null;
   barometer: string | null;
+  wifi: string | null;
 };
 
 const emptyLatest: LatestRaw = {
   accelerometer: null,
   gyroscope: null,
   barometer: null,
+  wifi: null,
 };
 
 let startChain: Promise<unknown> = Promise.resolve();
@@ -107,7 +109,12 @@ export function syncNativeRecordingLabels(): void {
     motionState: labels.motionState,
     deviceModel: device.deviceModel,
     osVersion: device.osVersion,
+    lockedSsid: labels.lockedSsid,
   });
+}
+
+export function isUsingNativeImu(): boolean {
+  return usingNativeImu;
 }
 
 function publishLatest(partial: Partial<LatestRaw>) {
@@ -166,6 +173,7 @@ function ensureNativeLatestSubscription() {
       accelerometer: event.accelerometer,
       gyroscope: event.gyroscope,
       barometer: event.barometer,
+      wifi: event.wifiTimestamp ?? latestLocal.wifi,
     });
   });
 }
@@ -209,6 +217,7 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
       motionState: labels.motionState,
       deviceModel: device.deviceModel,
       osVersion: device.osVersion,
+      lockedSsid: labels.lockedSsid,
     });
     if (started) {
       usingNativeImu = true;

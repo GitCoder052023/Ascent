@@ -100,7 +100,7 @@ export const ACTIVITY_OPTIONS: ActivityLabel[] = [
 
 export const PLATFORM_SENSOR_NOTES = [
   "Foreground: accelerometer, gyroscope, and barometer are collected at the OS-delivered rate (requested interval is a hint, not a resample).",
-  "Android: IMU is captured by a native RecordingImuService (health foreground service) on a dedicated sensor thread with SENSOR_DELAY_FASTEST, maxReportLatencyUs=0, a partial CPU wake lock, and WAL writes into the same SQLite file as the JS exporter. JS does not sit on the sample path. The location FGS remains the process babysitter. Unrestricted battery is requested at session start. Gaps still occur if the OEM kills the process.",
+  "Android: IMU and connected Wi-Fi are captured by a native RecordingImuService (health+location foreground service) on a dedicated thread. IMU uses SENSOR_DELAY_FASTEST. Wi-Fi is polled from WifiInfo (no AP scan) at 3s walking / 30s stationary and written to the same SQLite file. JS does not sit on the sample path. Unrestricted battery is required at session start. Background location is requested so SSID/RSSI stay readable with the screen off. Gaps still occur if the OEM kills the process.",
   "iOS background: the process is typically suspended except for location wakeups used by the existing Wi-Fi logger. Continuous IMU/barometer in the background is not provided by expo-sensors and is not faked.",
   "Barometer is optional hardware. If isAvailableAsync() is false, no pressure rows are written.",
   "timestamp / arrivalTimestamp are ISO-8601 UTC (milliseconds) of app receipt. sensorTimestamp is the native Expo measurement.timestamp in seconds when the API provides it; it is not Unix time.",

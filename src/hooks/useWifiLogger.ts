@@ -34,10 +34,13 @@ import {
   nextSessionId,
 } from "../lib/db";
 import { formatIsoMillis } from "../lib/rawObservation";
+import { nativeAndroidSignal } from "../lib/signalEngine";
 import {
   hydrateLabelsFromStorage,
+  KEY_LOCKED_SSID,
   setCachedActivity,
   setCachedFloor,
+  setCachedLockedSsid,
   setCachedMotionState,
   setCachedRecording,
   setCachedSessionId,
@@ -50,18 +53,20 @@ import {
 } from "./useRawSensorCollector";
 import {
   isImuCollectorRunning,
+  isUsingNativeImu,
   startImuCollector,
   stopImuCollector,
   syncNativeRecordingLabels,
 } from "../lib/imuCollector";
 import {
   isIgnoringBatteryOptimizations,
+  isNativeImuAvailable,
+  isNativeImuRecording,
   requestIgnoreBatteryOptimizations,
+  subscribeNativeImuLatest,
 } from "../../modules/recording-keepalive";
 
 const KEY_STARTED = "@wifi_logger_started";
-const KEY_NETWORK = "@wifi_logger_network";
-const KEY_RECOVERY_TIMESTAMPS = "@wifi_logger_recovery_timestamps";
 
 const DEVICE_META = {
   platform: Platform.OS,
@@ -78,6 +83,7 @@ export function useWifiLogger() {
   const [items, setItems] = useState<Measurement[]>([]);
   const [rawCount, setRawCount] = useState(0);
   const [recording, setRecording] = useState(false);
+  const [nativeCapture, setNativeCapture] = useState(false);
   const [started, setStarted] = useState<number | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [paused, setPaused] = useState(false);
@@ -142,7 +148,7 @@ export function useWifiLogger() {
       }
       void getRawObservationCount().then(setRawCount).catch(() => {});
       void refresh();
-      await syncBackgroundStatus();
+      await restoreRecordingIfNeeded();
       setHydrated(true);
     }
 
@@ -157,7 +163,7 @@ export function useWifiLogger() {
         void refresh();
         void loadMeasurements().then(setItems);
         void getRawObservationCount().then(setRawCount);
-        void syncBackgroundStatus();
+        void restoreRecordingIfNeeded();
       }
     });
 
@@ -172,73 +178,46 @@ export function useWifiLogger() {
     return () => clearInterval(clock);
   }, [recording]);
 
-  // Clear crash recovery tracking once recording runs stably for 30s
-  useEffect(() => {
-    if (!recording) return;
-    const timer = setTimeout(() => {
-      void AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS).catch(() => {});
-    }, 30000);
-    return () => clearTimeout(timer);
-  }, [recording]);
-
-  async function syncBackgroundStatus() {
+  async function restoreRecordingIfNeeded() {
     try {
-      const active = await isBackgroundLoggingActiveAsync();
-      if (active) {
-        // Crash loop detection: if app crashed & recovered 3+ times in 30s, abort to break loop
-        const now = Date.now();
-        let recoveries: number[] = [];
-        try {
-          const raw = await AsyncStorage.getItem(KEY_RECOVERY_TIMESTAMPS);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-              recoveries = parsed.filter((t: unknown) => typeof t === "number" && now - t < 30000);
-            }
-          }
-        } catch {
-          recoveries = [];
-        }
-        recoveries.push(now);
-        await AsyncStorage.setItem(KEY_RECOVERY_TIMESTAMPS, JSON.stringify(recoveries)).catch(() => {});
-
-        if (recoveries.length >= 3) {
-          console.warn("Crash loop detected: stopping background logging to recover safely");
+      if (Platform.OS === "android") {
+        // Location FGS restarts the Activity in a loop. Native IMU FGS is the keep-alive.
+        if (await isBackgroundLoggingActiveAsync()) {
           await stopBackgroundLoggingAsync().catch(() => {});
-          await stopImuCollector().catch(() => {});
-          await AsyncStorage.removeItem(KEY_STARTED).catch(() => {});
-          await AsyncStorage.removeItem(KEY_NETWORK).catch(() => {});
-          await AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS).catch(() => {});
-          setRecording(false);
-          setCachedRecording(false);
-          setNotice("Recording was safely stopped due to repeated app closures. Your saved data is intact.");
-          return;
-        }
-
-        setRecording(true);
-        setCachedRecording(true);
-        const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
-        const storedNetwork = await AsyncStorage.getItem(KEY_NETWORK);
-        if (storedStarted) {
-          const parsed = parseInt(storedStarted, 10);
-          if (!isNaN(parsed)) setStarted(parsed);
-        } else {
-          setStarted(Date.now());
-        }
-        if (storedNetwork) {
-          setNetwork(storedNetwork);
-        }
-        if (!isImuCollectorRunning()) {
-          // Stabilization delay so Activity resume lifecycle settles before sensor listeners attach
-          setTimeout(() => {
-            if (!isImuCollectorRunning()) {
-              void startImuCollector(DEVICE_META);
-            }
-          }, 800);
         }
       }
+
+      const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
+      const storedNetwork = await AsyncStorage.getItem(KEY_LOCKED_SSID);
+      const nativeOn = isNativeImuRecording();
+      const locationOn =
+        Platform.OS !== "android" && (await isBackgroundLoggingActiveAsync());
+      if (!storedStarted && !nativeOn && !locationOn) {
+        return;
+      }
+
+      setRecording(true);
+      setCachedRecording(true);
+      if (storedStarted) {
+        const parsed = parseInt(storedStarted, 10);
+        if (!isNaN(parsed)) {
+          setStarted(parsed);
+        }
+      } else {
+        const now = Date.now();
+        setStarted(now);
+        await AsyncStorage.setItem(KEY_STARTED, String(now)).catch(() => {});
+      }
+      if (storedNetwork) {
+        setNetwork(storedNetwork);
+        setCachedLockedSsid(storedNetwork);
+      }
+      if (!isImuCollectorRunning()) {
+        await startImuCollector(DEVICE_META);
+      }
+      setNativeCapture(isUsingNativeImu() || isNativeImuRecording());
     } catch {
-      // Ignore background sync errors
+      // Ignore restore errors; the user can start a new session.
     }
   }
 
@@ -255,9 +234,46 @@ export function useWifiLogger() {
     return () => clearInterval(clock);
   }, [recording, started]);
 
+  useEffect(() => {
+    if (!isNativeImuAvailable()) {
+      return;
+    }
+    return subscribeNativeImuLatest((event) => {
+      if (!event.wifiConnectionState) {
+        return;
+      }
+      const connected = event.wifiConnectionState === "CONNECTED";
+      setWifi({
+        connectionState: connected ? "CONNECTED" : "DISCONNECTED",
+        ssid: event.wifiSsid ?? null,
+        bssid: event.wifiBssid ?? null,
+        signalStrength: event.wifiRssi ?? null,
+        signalStrengthUnit: event.wifiRssi != null ? "dBm" : null,
+        frequency: event.wifiFrequency ?? null,
+      });
+      setLastProcessed(nativeAndroidSignal(event.wifiRssi ?? null, event.wifiFrequency ?? null));
+      if (event.wifiSsidMismatch) {
+        setPaused(true);
+        setNotice(
+          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${event.wifiSsid}. Wi-Fi sampling paused; IMU recording continues.`
+        );
+      }
+    });
+  }, [network]);
+
+  useEffect(() => {
+    if (!recording || !nativeCapture) {
+      return;
+    }
+    const clock = setInterval(() => {
+      void loadMeasurements().then(setItems).catch(() => {});
+    }, 2000);
+    return () => clearInterval(clock);
+  }, [recording, nativeCapture]);
+
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (!recording || paused || !appActive) {
+    if (!recording || paused || nativeCapture) {
       return;
     }
 
@@ -268,7 +284,7 @@ export function useWifiLogger() {
         clearInterval(interval.current);
       }
     };
-  }, [recording, paused, floor, network, sampleIntervalMs, appActive]);
+  }, [recording, paused, floor, network, sampleIntervalMs, nativeCapture]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   async function refresh() {
@@ -285,19 +301,34 @@ export function useWifiLogger() {
 
   async function requestPermission() {
     if (Platform.OS === "android") {
-      const permissions = [PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION];
+      const permissions: string[] = [
+        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+      ];
       if (typeof Platform.Version === "number" && Platform.Version >= 33) {
         const postNotifications = PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS;
         if (postNotifications) {
           permissions.push(postNotifications);
         }
+        permissions.push("android.permission.NEARBY_WIFI_DEVICES");
       }
 
-      const result = await PermissionsAndroid.requestMultiple(permissions);
+      const result = await PermissionsAndroid.requestMultiple(
+        permissions as Parameters<typeof PermissionsAndroid.requestMultiple>[0]
+      );
       if (result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] !== PermissionsAndroid.RESULTS.GRANTED) {
         setNotice(
           "Location permission is off. Wi-Fi fields may be empty; IMU recording can still continue."
         );
+      }
+
+      if (typeof Platform.Version === "number" && Platform.Version >= 29) {
+        const fineGranted =
+          result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
+          PermissionsAndroid.RESULTS.GRANTED;
+        if (fineGranted) {
+          await requestBackgroundLocation();
+        }
       }
     }
     await requestMotionPermissions();
@@ -315,23 +346,50 @@ export function useWifiLogger() {
     return true;
   }
 
-  function promptUnrestrictedBattery() {
-    if (Platform.OS !== "android" || isIgnoringBatteryOptimizations()) {
-      return;
-    }
-    Alert.alert(
-      "Allow unrestricted battery",
-      "Android will suspend sensors when the screen is off unless this app is exempt from battery optimization. This is required for continuous IMU collection.",
-      [
-        { text: "Later", style: "cancel" },
-        {
-          text: "Allow",
-          onPress: () => {
-            void requestIgnoreBatteryOptimizations();
+  async function requestBackgroundLocation() {
+    const background =
+      PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION ??
+      "android.permission.ACCESS_BACKGROUND_LOCATION";
+    await new Promise<void>((resolve) => {
+      Alert.alert(
+        "Allow location all the time",
+        "Android hides SSID and RSSI when the screen is off unless this app has background location. Choose Allow all the time on the next screen.",
+        [
+          { text: "Skip", style: "cancel", onPress: () => resolve() },
+          {
+            text: "Continue",
+            onPress: () => {
+              void PermissionsAndroid.request(background)
+                .catch(() => null)
+                .finally(() => resolve());
+            },
           },
-        },
-      ]
-    );
+        ]
+      );
+    });
+  }
+
+  async function ensureUnrestrictedBattery(): Promise<boolean> {
+    if (Platform.OS !== "android" || isIgnoringBatteryOptimizations()) {
+      return true;
+    }
+    return await new Promise((resolve) => {
+      Alert.alert(
+        "Unrestricted battery required",
+        "Lock-screen IMU and Wi-Fi will stop unless this app is exempt from battery optimization. Recording will not start until you allow it.",
+        [
+          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
+          {
+            text: "Allow",
+            onPress: () => {
+              void requestIgnoreBatteryOptimizations().finally(() => {
+                resolve(isIgnoringBatteryOptimizations());
+              });
+            },
+          },
+        ]
+      );
+    });
   }
 
   async function sample() {
@@ -372,82 +430,107 @@ export function useWifiLogger() {
   }
 
   async function start() {
-    if (!(await requestPermission())) {
-      return;
-    }
-
-    const current = await getConnectedWifi();
-    setWifi(current);
-
-    const now = Date.now();
-    const availability = await probeSensorAvailability();
-    const newSessionId = await nextSessionId();
-    await insertRecordingSession({
-      id: newSessionId,
-      startedAt: formatIsoMillis(now),
-      endedAt: null,
-      accelerometerAvailable: availability.accelerometerAvailable,
-      gyroscopeAvailable: availability.gyroscopeAvailable,
-      barometerAvailable: availability.barometerAvailable,
-      platform: DEVICE_META.platform,
-      deviceModel: DEVICE_META.deviceModel,
-      osVersion: DEVICE_META.osVersion,
-      notes: PLATFORM_SENSOR_NOTES,
-    });
-
-    setCachedSessionId(newSessionId);
-    setCachedFloor(floor);
-    setCachedActivity(activity);
-    setCachedRecording(true);
-    setSessionId(newSessionId);
-    setStarted(now);
-    setSeconds(0);
-    setPaused(false);
-    setRecording(true);
-
-    await AsyncStorage.setItem(KEY_STARTED, String(now));
-    await AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS);
-    if (current.connectionState === "CONNECTED" && current.ssid) {
-      await AsyncStorage.setItem(KEY_NETWORK, current.ssid);
-      setNetwork(current.ssid);
-    } else {
-      await AsyncStorage.removeItem(KEY_NETWORK);
-      setNetwork(null);
-    }
-
-    await startImuCollector(DEVICE_META);
-    promptUnrestrictedBattery();
-
-    let backgroundNotice: string | null = null;
     try {
-      const bgOk = await startBackgroundLoggingAsync(floor);
-      if (!bgOk) {
-        backgroundNotice =
-          "Background keep-alive could not start. Recording still runs while this screen stays open.";
+      if (!(await requestPermission())) {
+        return;
+      }
+      if (!(await ensureUnrestrictedBattery())) {
+        setNotice(
+          "Recording did not start. Allow unrestricted battery, then tap Start Recording again."
+        );
+        return;
+      }
+
+      const current = await getConnectedWifi();
+      setWifi(current);
+
+      const now = Date.now();
+      const availability = await probeSensorAvailability();
+      const newSessionId = await nextSessionId();
+      await insertRecordingSession({
+        id: newSessionId,
+        startedAt: formatIsoMillis(now),
+        endedAt: null,
+        accelerometerAvailable: availability.accelerometerAvailable,
+        gyroscopeAvailable: availability.gyroscopeAvailable,
+        barometerAvailable: availability.barometerAvailable,
+        platform: DEVICE_META.platform,
+        deviceModel: DEVICE_META.deviceModel,
+        osVersion: DEVICE_META.osVersion,
+        notes: PLATFORM_SENSOR_NOTES,
+      });
+
+      setCachedSessionId(newSessionId);
+      setCachedFloor(floor);
+      setCachedActivity(activity);
+      setCachedRecording(true);
+      setSessionId(newSessionId);
+      setStarted(now);
+      setSeconds(0);
+      setPaused(false);
+      setRecording(true);
+
+      await AsyncStorage.setItem(KEY_STARTED, String(now));
+      if (current.connectionState === "CONNECTED" && current.ssid) {
+        setCachedLockedSsid(current.ssid);
+        setNetwork(current.ssid);
+      } else {
+        setCachedLockedSsid(null);
+        setNetwork(null);
+      }
+
+      await startImuCollector(DEVICE_META);
+      setNativeCapture(isUsingNativeImu());
+
+      let backgroundNotice: string | null = null;
+      if (Platform.OS === "android") {
+        // Tear down any leftover location FGS from older builds. Starting it
+        // next to the IMU service recreates the Activity until recording is aborted.
+        await stopBackgroundLoggingAsync().catch(() => {});
+      } else {
+        try {
+          const bgOk = await startBackgroundLoggingAsync(floor);
+          if (!bgOk) {
+            backgroundNotice =
+              "Background keep-alive could not start. Recording still runs while this screen stays open.";
+          }
+        } catch (e) {
+          console.warn("Could not start background task:", e);
+        }
+      }
+
+      if (Platform.OS === "android" && isUsingNativeImu()) {
+        backgroundNotice = [
+          backgroundNotice,
+          "Keep the IMU notification visible and lock Ascent in Recents.",
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+
+      if (!availability.barometerAvailable) {
+        backgroundNotice = [backgroundNotice, "No barometer on this device. Pressure rows will not be written."]
+          .filter(Boolean)
+          .join(" ");
+      }
+
+      if (current.connectionState !== "CONNECTED" || !current.ssid) {
+        backgroundNotice = [
+          backgroundNotice,
+          "No Wi-Fi connection. Recording IMU/barometer only; Wi-Fi rows will appear if you connect later.",
+        ]
+          .filter(Boolean)
+          .join(" ");
+      }
+
+      setNotice(backgroundNotice);
+
+      if (!isUsingNativeImu() && current.connectionState === "CONNECTED" && current.ssid) {
+        await sample();
       }
     } catch (e) {
-      console.warn("Could not start background task:", e);
-    }
-
-    if (!availability.barometerAvailable) {
-      backgroundNotice = [backgroundNotice, "No barometer on this device. Pressure rows will not be written."]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    if (current.connectionState !== "CONNECTED" || !current.ssid) {
-      backgroundNotice = [
-        backgroundNotice,
-        "No Wi-Fi connection. Recording IMU/barometer only; Wi-Fi rows will appear if you connect later.",
-      ]
-        .filter(Boolean)
-        .join(" ");
-    }
-
-    setNotice(backgroundNotice);
-
-    if (current.connectionState === "CONNECTED" && current.ssid) {
-      await sample();
+      console.warn("Could not start recording:", e);
+      setNotice("Recording could not start. Try again.");
     }
   }
 
@@ -455,10 +538,11 @@ export function useWifiLogger() {
     setRecording(false);
     setPaused(false);
     setCachedRecording(false);
+    setNativeCapture(false);
     await stopImuCollector();
     await AsyncStorage.removeItem(KEY_STARTED);
-    await AsyncStorage.removeItem(KEY_NETWORK);
-    await AsyncStorage.removeItem(KEY_RECOVERY_TIMESTAMPS);
+    setCachedLockedSsid(null);
+    setNetwork(null);
     try {
       await stopBackgroundLoggingAsync();
     } catch (e) {

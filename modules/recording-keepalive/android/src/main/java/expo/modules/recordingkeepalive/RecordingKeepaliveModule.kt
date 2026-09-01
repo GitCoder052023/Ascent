@@ -146,7 +146,14 @@ class RecordingKeepaliveModule : Module() {
       gyroscope: String?,
       barometer: String?,
       motionState: String,
-      lastSampleAt: Long
+      lastSampleAt: Long,
+      wifiConnectionState: String? = null,
+      wifiSsid: String? = null,
+      wifiBssid: String? = null,
+      wifiRssi: Int? = null,
+      wifiFrequency: Int? = null,
+      wifiTimestamp: String? = null,
+      wifiSsidMismatch: Boolean = false,
     ) {
       instance?.get()?.sendEvent(
         "onLatest",
@@ -156,6 +163,13 @@ class RecordingKeepaliveModule : Module() {
           "barometer" to barometer,
           "motionState" to motionState,
           "lastSampleAt" to lastSampleAt,
+          "wifiConnectionState" to wifiConnectionState,
+          "wifiSsid" to wifiSsid,
+          "wifiBssid" to wifiBssid,
+          "wifiRssi" to wifiRssi,
+          "wifiFrequency" to wifiFrequency,
+          "wifiTimestamp" to wifiTimestamp,
+          "wifiSsidMismatch" to wifiSsidMismatch,
         )
       )
     }

@@ -159,7 +159,7 @@ export default function Index() {
       <DatasetActions logger={logger} />
 
       <Text style={styles.footnote}>
-        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. Keep the recording notifications visible. On Android, IMU is written by a native service independent of the JS runtime. Allow unrestricted battery when prompted, and lock the app in Recents on aggressive OEMs. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
+        Raw rows are independent sensor events (accel / gyro / barometer / Wi‑Fi) with millisecond arrival timestamps and the active manual labels. Keep the IMU recording notification visible. On Android, IMU and connected Wi‑Fi are written by a native service; allow unrestricted battery and location all the time when prompted, and lock the app in Recents on aggressive OEMs. Gaps are still possible if Android kills the process. No fusion, filtering, or auto-labeling is applied to this dataset.
       </Text>
     </ScrollView>
   );
@@ -175,6 +175,7 @@ function SensorStatus({ logger }: { logger: ReturnType<typeof useWifiLogger> }) 
       <InfoRow label="Last accel row" value={logger.latestRaw.accelerometer} />
       <InfoRow label="Last gyro row" value={logger.latestRaw.gyroscope} />
       <InfoRow label="Last pressure row" value={logger.latestRaw.barometer} />
+      <InfoRow label="Last Wi-Fi row" value={logger.latestRaw.wifi} />
       <InfoRow label="Wi-Fi samples" value={logger.items.length} />
     </Section>
   );

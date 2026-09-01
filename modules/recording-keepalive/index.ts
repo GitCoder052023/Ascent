@@ -7,6 +7,13 @@ export type NativeLatestEvent = {
   barometer: string | null;
   motionState: string;
   lastSampleAt: number;
+  wifiConnectionState?: string | null;
+  wifiSsid?: string | null;
+  wifiBssid?: string | null;
+  wifiRssi?: number | null;
+  wifiFrequency?: number | null;
+  wifiTimestamp?: string | null;
+  wifiSsidMismatch?: boolean;
 };
 
 export type NativeRecordingOptions = {
@@ -16,6 +23,7 @@ export type NativeRecordingOptions = {
   motionState?: string | null;
   deviceModel?: string | null;
   osVersion?: string | null;
+  lockedSsid?: string | null;
 };
 
 type RecordingKeepaliveNative = {
@@ -52,6 +60,7 @@ function compactOptions(options: NativeRecordingOptions): Record<string, string 
     motionState: options.motionState ?? "",
     deviceModel: options.deviceModel ?? "",
     osVersion: options.osVersion ?? "",
+    lockedSsid: options.lockedSsid ?? "",
   };
 }
 

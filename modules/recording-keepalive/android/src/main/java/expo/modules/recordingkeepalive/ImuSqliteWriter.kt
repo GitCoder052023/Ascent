@@ -17,10 +17,14 @@ internal data class ImuSample(
   val sensorType: String,
   val arrivalMs: Long,
   val sensorTimestampSec: Double,
-  val x: Double?,
-  val y: Double?,
-  val z: Double?,
-  val pressure: Double?,
+  val x: Double? = null,
+  val y: Double? = null,
+  val z: Double? = null,
+  val pressure: Double? = null,
+  val ssid: String? = null,
+  val bssid: String? = null,
+  val rssi: Double? = null,
+  val frequency: Int? = null,
 )
 
 internal data class RecordingLabels(
@@ -44,7 +48,8 @@ internal class ImuSqliteWriter(context: Context) {
   @Volatile var labels = RecordingLabels(null, null, null, null, null, null)
 
   private var db: SQLiteDatabase? = null
-  private var insert: SQLiteStatement? = null
+  private var insertRaw: SQLiteStatement? = null
+  private var insertMeasurement: SQLiteStatement? = null
   private var thread: HandlerThread? = null
   private var handler: Handler? = null
 
@@ -61,7 +66,9 @@ internal class ImuSqliteWriter(context: Context) {
     opened.enableWriteAheadLogging()
     opened.execSQL("PRAGMA busy_timeout = 8000")
     opened.execSQL(CREATE_RAW)
-    insert = opened.compileStatement(INSERT_RAW)
+    opened.execSQL(CREATE_MEASUREMENTS)
+    insertRaw = opened.compileStatement(INSERT_RAW)
+    insertMeasurement = opened.compileStatement(INSERT_MEASUREMENT)
     db = opened
 
     val writer = HandlerThread("ascent-imu-db").also { it.start() }
@@ -98,8 +105,10 @@ internal class ImuSqliteWriter(context: Context) {
   fun stop() {
     handler?.removeCallbacks(flushRunnable)
     flushBlocking()
-    insert?.close()
-    insert = null
+    insertRaw?.close()
+    insertRaw = null
+    insertMeasurement?.close()
+    insertMeasurement = null
     db?.close()
     db = null
     thread?.quitSafely()
@@ -119,7 +128,7 @@ internal class ImuSqliteWriter(context: Context) {
   }
 
   private fun drainLocked() {
-    val statement = insert ?: return
+    val rawStatement = insertRaw ?: return
     val database = db ?: return
     val batch = ArrayList<ImuSample>(FLUSH_SIZE)
     while (batch.size < FLUSH_SIZE) {
@@ -133,9 +142,17 @@ internal class ImuSqliteWriter(context: Context) {
     database.beginTransaction()
     try {
       for (sample in batch) {
-        bind(statement, sample, snap)
-        statement.executeInsert()
-        statement.clearBindings()
+        val id = nextId(sample.arrivalMs, sample.sensorType)
+        bindRaw(rawStatement, sample, snap, id)
+        rawStatement.executeInsert()
+        rawStatement.clearBindings()
+        if (sample.sensorType == "wifi") {
+          insertMeasurement?.let { statement ->
+            bindMeasurement(statement, sample, snap, id)
+            statement.executeInsert()
+            statement.clearBindings()
+          }
+        }
       }
       database.setTransactionSuccessful()
     } catch (_: Exception) {
@@ -147,9 +164,14 @@ internal class ImuSqliteWriter(context: Context) {
     }
   }
 
-  private fun bind(statement: SQLiteStatement, sample: ImuSample, snap: RecordingLabels) {
+  private fun bindRaw(
+    statement: SQLiteStatement,
+    sample: ImuSample,
+    snap: RecordingLabels,
+    id: String
+  ) {
     val iso = synchronized(isoLock) { isoFormat.format(Date(sample.arrivalMs)) }
-    statement.bindString(1, nextId(sample.arrivalMs, sample.sensorType))
+    statement.bindString(1, id)
     bindText(statement, 2, snap.sessionId)
     statement.bindString(3, iso)
     statement.bindString(4, iso)
@@ -166,15 +188,47 @@ internal class ImuSqliteWriter(context: Context) {
     bindDouble(statement, 15, if (sample.sensorType == "gyroscope") sample.y else null)
     bindDouble(statement, 16, if (sample.sensorType == "gyroscope") sample.z else null)
     bindDouble(statement, 17, sample.pressure)
-    statement.bindNull(18)
-    statement.bindNull(19)
-    statement.bindNull(20)
-    statement.bindNull(21)
-    statement.bindNull(22)
-    statement.bindNull(23)
+    bindText(statement, 18, sample.ssid)
+    bindText(statement, 19, sample.bssid)
+    bindDouble(statement, 20, sample.rssi)
+    bindText(statement, 21, if (sample.sensorType == "wifi" && sample.rssi != null) "dBm" else null)
+    if (sample.frequency != null) {
+      statement.bindLong(22, sample.frequency.toLong())
+    } else {
+      statement.bindNull(22)
+    }
+    bindText(statement, 23, if (sample.sensorType == "wifi") "wifi" else null)
     statement.bindString(24, "android")
     bindText(statement, 25, snap.deviceModel)
     bindText(statement, 26, snap.osVersion)
+  }
+
+  private fun bindMeasurement(
+    statement: SQLiteStatement,
+    sample: ImuSample,
+    snap: RecordingLabels,
+    id: String
+  ) {
+    val iso = synchronized(isoLock) { isoFormat.format(Date(sample.arrivalMs)) }
+    val freq = sample.frequency
+    val rssi = sample.rssi?.toInt()
+    val band = ConnectedWifi.frequencyBand(freq)
+    val score = ConnectedWifi.normalizedScore(rssi, freq)
+    statement.bindString(1, id)
+    statement.bindString(2, iso)
+    bindText(statement, 3, snap.floor ?: "FLOOR_1")
+    bindText(statement, 4, sample.ssid)
+    bindText(statement, 5, sample.bssid)
+    bindDouble(statement, 6, sample.rssi)
+    bindText(statement, 7, if (sample.rssi != null) "dBm" else null)
+    if (freq != null) statement.bindLong(8, freq.toLong()) else statement.bindNull(8)
+    statement.bindString(9, "wifi")
+    statement.bindString(10, "android")
+    bindText(statement, 11, snap.deviceModel)
+    bindText(statement, 12, snap.osVersion)
+    bindDouble(statement, 13, score)
+    bindDouble(statement, 14, sample.rssi)
+    bindText(statement, 15, band)
   }
 
   private fun bindText(statement: SQLiteStatement, index: Int, value: String?) {
@@ -219,6 +273,25 @@ internal class ImuSqliteWriter(context: Context) {
         os_version TEXT
       )
     """
+    private const val CREATE_MEASUREMENTS = """
+      CREATE TABLE IF NOT EXISTS measurements (
+        id TEXT PRIMARY KEY,
+        timestamp TEXT NOT NULL,
+        floor TEXT NOT NULL,
+        ssid TEXT,
+        bssid TEXT,
+        signal_strength REAL,
+        signal_strength_unit TEXT,
+        frequency INTEGER,
+        connection_type TEXT,
+        platform TEXT,
+        device_model TEXT,
+        os_version TEXT,
+        signal_strength_normalized REAL,
+        signal_strength_estimated_dbm REAL,
+        frequency_band TEXT
+      )
+    """
     private const val INSERT_RAW = """
       INSERT OR REPLACE INTO raw_observations (
         id, session_id, timestamp, arrival_timestamp, sensor_timestamp, timestamp_source, sensor_type,
@@ -228,6 +301,13 @@ internal class ImuSqliteWriter(context: Context) {
         ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
         platform, device_model, os_version
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    private const val INSERT_MEASUREMENT = """
+      INSERT OR REPLACE INTO measurements (
+        id, timestamp, floor, ssid, bssid, signal_strength, signal_strength_unit,
+        frequency, connection_type, platform, device_model, os_version,
+        signal_strength_normalized, signal_strength_estimated_dbm, frequency_band
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
   }
 }

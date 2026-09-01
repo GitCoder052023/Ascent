@@ -1,5 +1,6 @@
 package expo.modules.recordingkeepalive
 
+import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -46,6 +48,12 @@ class RecordingImuService : Service(), SensorEventListener {
   private var gravityEstimate = 1.0
   private var lastWalkAt = 0L
   private var motionState = "STATIONARY"
+  private var wifiHandler: Handler? = null
+  private var wifiScheduled = false
+  private var lockedSsid: String? = null
+  private var lastWifi: ConnectedWifiSnapshot? = null
+  private var lastWifiIso: String? = null
+  private var wifiSsidMismatch = false
 
   private val isoLock = Any()
   private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
@@ -57,24 +65,30 @@ class RecordingImuService : Service(), SensorEventListener {
   override fun onCreate() {
     super.onCreate()
     enterForeground()
-    val pm = getSystemService(POWER_SERVICE) as PowerManager
-    wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ascent:imu").apply {
-      setReferenceCounted(false)
-      acquire()
+    try {
+      val pm = getSystemService(POWER_SERVICE) as PowerManager
+      wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ascent:imu").apply {
+        setReferenceCounted(false)
+        acquire()
+      }
+      writer = ImuSqliteWriter(this).also { it.start() }
+      sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+      accel = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+      gyro = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
+      baro = sensorManager?.getDefaultSensor(Sensor.TYPE_PRESSURE)
+      val thread = HandlerThread("ascent-imu-sensors").also { it.start() }
+      sensorThread = thread
+      val handler = Handler(thread.looper)
+      accel?.let { registerSensor(it, handler) }
+      gyro?.let { registerSensor(it, handler) }
+      baro?.let { registerSensor(it, handler) }
+      wifiHandler = handler
+      wifiScheduled = true
+      handler.post(wifiTick)
+      running = true
+    } catch (_: Exception) {
+      running = true
     }
-    writer = ImuSqliteWriter(this).also { it.start() }
-    sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-    accel = sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
-    gyro = sensorManager?.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
-    baro = sensorManager?.getDefaultSensor(Sensor.TYPE_PRESSURE)
-    val thread = HandlerThread("ascent-imu-sensors").also { it.start() }
-    sensorThread = thread
-    val handler = Handler(thread.looper)
-    val delay = SensorManager.SENSOR_DELAY_FASTEST
-    accel?.let { sensorManager?.registerListener(this, it, delay, 0, handler) }
-    gyro?.let { sensorManager?.registerListener(this, it, delay, 0, handler) }
-    baro?.let { sensorManager?.registerListener(this, it, delay, 0, handler) }
-    running = true
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -85,6 +99,10 @@ class RecordingImuService : Service(), SensorEventListener {
     enterForeground()
     applyLabels(intent)
     running = true
+    if (!wifiScheduled) {
+      wifiScheduled = true
+      wifiHandler?.post(wifiTick)
+    }
     return START_REDELIVER_INTENT
   }
 
@@ -160,13 +178,7 @@ class RecordingImuService : Service(), SensorEventListener {
     }
     lastUiAt = now
     mainHandler.post {
-      RecordingKeepaliveModule.emitLatest(
-        lastAccelIso,
-        lastGyroIso,
-        lastBaroIso,
-        motionState,
-        now
-      )
+      emitUi(now)
     }
   }
 
@@ -190,6 +202,68 @@ class RecordingImuService : Service(), SensorEventListener {
       osVersion = extra(EXTRA_OS_VERSION)
     )
     extra(EXTRA_MOTION)?.let { motionState = it }
+    lockedSsid = extra(EXTRA_LOCKED_SSID)
+  }
+
+  private val wifiTick = object : Runnable {
+    override fun run() {
+      sampleWifi()
+      val delay = if (motionState == "WALKING") WIFI_WALKING_INTERVAL_MS else WIFI_STATIONARY_INTERVAL_MS
+      wifiHandler?.postDelayed(this, delay)
+    }
+  }
+
+  private fun sampleWifi() {
+    if (!running) {
+      return
+    }
+    val snapshot = ConnectedWifi.read(this)
+    lastWifi = snapshot
+    val now = System.currentTimeMillis()
+    if (!snapshot.connected || snapshot.ssid == null) {
+      wifiSsidMismatch = false
+      emitUi(now)
+      return
+    }
+    val lock = lockedSsid
+    if (!lock.isNullOrEmpty() && snapshot.ssid != lock) {
+      wifiSsidMismatch = true
+      emitUi(now)
+      return
+    }
+    wifiSsidMismatch = false
+    writer?.enqueue(
+      ImuSample(
+        sensorType = "wifi",
+        arrivalMs = now,
+        sensorTimestampSec = now / 1000.0,
+        ssid = snapshot.ssid,
+        bssid = snapshot.bssid,
+        rssi = snapshot.rssi?.toDouble(),
+        frequency = snapshot.frequency,
+      )
+    )
+    lastWifiIso = iso(now)
+    lastSampleAtElapsed = SystemClock.elapsedRealtime()
+    emitUi(now)
+  }
+
+  private fun emitUi(now: Long) {
+    val wifi = lastWifi
+    RecordingKeepaliveModule.emitLatest(
+      lastAccelIso,
+      lastGyroIso,
+      lastBaroIso,
+      motionState,
+      now,
+      if (wifi?.connected == true) "CONNECTED" else "DISCONNECTED",
+      wifi?.ssid,
+      wifi?.bssid,
+      wifi?.rssi,
+      wifi?.frequency,
+      lastWifiIso,
+      wifiSsidMismatch,
+    )
   }
 
   private fun enterForeground() {
@@ -220,16 +294,27 @@ class RecordingImuService : Service(), SensorEventListener {
     }
     val notification = builder
       .setContentTitle("Ascent IMU")
-      .setContentText("Native accelerometer, gyroscope, and barometer are recording.")
-      .setSmallIcon(applicationInfo.icon)
+      .setContentText("Native IMU and connected Wi-Fi are recording.")
+      .setSmallIcon(android.R.drawable.ic_media_play)
       .setOngoing(true)
       .setOnlyAlertOnce(true)
       .setContentIntent(pending)
       .setCategory(Notification.CATEGORY_SERVICE)
       .build()
+    val locationOk = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
+      PackageManager.PERMISSION_GRANTED
+    val typeMask = if (Build.VERSION.SDK_INT >= 34) {
+      var types = ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH
+      if (locationOk) {
+        types = types or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+      }
+      types
+    } else {
+      0
+    }
     try {
       if (Build.VERSION.SDK_INT >= 34) {
-        startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+        startForeground(NOTIFICATION_ID, notification, typeMask)
       } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
         startForeground(NOTIFICATION_ID, notification, 0)
       } else {
@@ -237,9 +322,38 @@ class RecordingImuService : Service(), SensorEventListener {
       }
     } catch (_: Exception) {
       try {
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= 34) {
+          startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_HEALTH)
+        } else {
+          startForeground(NOTIFICATION_ID, notification)
+        }
       } catch (_: Exception) {
-        // Location FGS + wake lock still keep the process; keep sampling anyway.
+        try {
+          startForeground(NOTIFICATION_ID, notification)
+        } catch (_: Exception) {
+          // Keep sampling even if the notification type is rejected.
+        }
+      }
+    }
+  }
+
+  private fun registerSensor(sensor: Sensor, handler: Handler) {
+    val delays = intArrayOf(
+      SensorManager.SENSOR_DELAY_FASTEST,
+      SensorManager.SENSOR_DELAY_GAME,
+      SensorManager.SENSOR_DELAY_UI,
+      SensorManager.SENSOR_DELAY_NORMAL,
+    )
+    for (delay in delays) {
+      try {
+        val ok = sensorManager?.registerListener(this, sensor, delay, 0, handler) == true
+        if (ok) {
+          return
+        }
+      } catch (_: SecurityException) {
+        // HIGH_SAMPLING_RATE_SENSORS is required for FASTEST on Android 12+.
+      } catch (_: Exception) {
+        // Try a slower delay.
       }
     }
   }
@@ -250,6 +364,9 @@ class RecordingImuService : Service(), SensorEventListener {
     }
     stopping = true
     running = false
+    wifiHandler?.removeCallbacks(wifiTick)
+    wifiHandler = null
+    wifiScheduled = false
     sensorManager?.unregisterListener(this)
     sensorThread?.quitSafely()
     sensorThread = null
@@ -275,7 +392,10 @@ class RecordingImuService : Service(), SensorEventListener {
     const val EXTRA_MOTION = "motionState"
     const val EXTRA_DEVICE_MODEL = "deviceModel"
     const val EXTRA_OS_VERSION = "osVersion"
+    const val EXTRA_LOCKED_SSID = "lockedSsid"
     const val ACCEL_INTERVAL_MS = 20L
+    const val WIFI_WALKING_INTERVAL_MS = 3000L
+    const val WIFI_STATIONARY_INTERVAL_MS = 30000L
     const val GYRO_INTERVAL_MS = 20L
     const val BARO_INTERVAL_MS = 200L
     private const val NOTIFICATION_ID = 481757
@@ -326,6 +446,7 @@ class RecordingImuService : Service(), SensorEventListener {
         .putExtra(EXTRA_MOTION, options["motionState"])
         .putExtra(EXTRA_DEVICE_MODEL, options["deviceModel"])
         .putExtra(EXTRA_OS_VERSION, options["osVersion"])
+        .putExtra(EXTRA_LOCKED_SSID, options["lockedSsid"])
     }
   }
 }

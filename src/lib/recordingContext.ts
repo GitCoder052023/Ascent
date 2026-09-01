@@ -5,6 +5,7 @@ export const KEY_ACTIVE_FLOOR = "@wifi_logger_active_floor";
 export const KEY_ACTIVE_ACTIVITY = "@wifi_logger_active_activity";
 export const KEY_SESSION_ID = "@wifi_logger_session_id";
 export const KEY_MOTION_STATE = "@wifi_logger_motion_state";
+export const KEY_LOCKED_SSID = "@wifi_logger_network";
 
 export type CachedLabels = {
   sessionId: string | null;
@@ -12,6 +13,7 @@ export type CachedLabels = {
   activity: ActivityLabel | null;
   motionState: MotionState;
   recording: boolean;
+  lockedSsid: string | null;
 };
 
 const cache: CachedLabels = {
@@ -20,6 +22,7 @@ const cache: CachedLabels = {
   activity: null,
   motionState: "STATIONARY",
   recording: false,
+  lockedSsid: null,
 };
 
 function isFloor(value: string | null): value is Floor {
@@ -65,6 +68,15 @@ export function setCachedActivity(activity: ActivityLabel | null) {
   }
 }
 
+export function setCachedLockedSsid(ssid: string | null) {
+  cache.lockedSsid = ssid;
+  if (ssid) {
+    void AsyncStorage.setItem(KEY_LOCKED_SSID, ssid).catch(() => {});
+  } else {
+    void AsyncStorage.removeItem(KEY_LOCKED_SSID).catch(() => {});
+  }
+}
+
 export function setCachedMotionState(motionState: MotionState) {
   if (cache.motionState === motionState) {
     return;
@@ -75,17 +87,19 @@ export function setCachedMotionState(motionState: MotionState) {
 
 export async function hydrateLabelsFromStorage(): Promise<CachedLabels> {
   try {
-    const [floor, activity, sessionId, motionState] = await Promise.all([
+    const [floor, activity, sessionId, motionState, lockedSsid] = await Promise.all([
       AsyncStorage.getItem(KEY_ACTIVE_FLOOR),
       AsyncStorage.getItem(KEY_ACTIVE_ACTIVITY),
       AsyncStorage.getItem(KEY_SESSION_ID),
       AsyncStorage.getItem(KEY_MOTION_STATE),
+      AsyncStorage.getItem(KEY_LOCKED_SSID),
     ]);
     if (isFloor(floor)) {
       cache.floor = floor;
     }
     cache.activity = isActivity(activity) ? activity : null;
     cache.sessionId = sessionId;
+    cache.lockedSsid = lockedSsid;
     if (isMotion(motionState)) {
       cache.motionState = motionState;
     }
@@ -96,11 +110,12 @@ export async function hydrateLabelsFromStorage(): Promise<CachedLabels> {
 }
 
 export async function readLabelsFromStorage(): Promise<CachedLabels> {
-  const [floor, activity, sessionId, motionState] = await Promise.all([
+  const [floor, activity, sessionId, motionState, lockedSsid] = await Promise.all([
     AsyncStorage.getItem(KEY_ACTIVE_FLOOR),
     AsyncStorage.getItem(KEY_ACTIVE_ACTIVITY),
     AsyncStorage.getItem(KEY_SESSION_ID),
     AsyncStorage.getItem(KEY_MOTION_STATE),
+    AsyncStorage.getItem(KEY_LOCKED_SSID),
   ]);
   return {
     sessionId,
@@ -108,5 +123,6 @@ export async function readLabelsFromStorage(): Promise<CachedLabels> {
     activity: isActivity(activity) ? activity : null,
     motionState: isMotion(motionState) ? motionState : cache.motionState,
     recording: cache.recording || Boolean(sessionId),
+    lockedSsid: lockedSsid ?? cache.lockedSsid,
   };
 }
