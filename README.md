@@ -1,193 +1,145 @@
 # Ascent
 
-> **Research Tool:** Designed for multi-floor indoor mapping and spatial positioning research (gym floors in the current labeling UI). Records timestamped, raw sensor and connected Wi-Fi datasets without on-device fusion, filtering, or auto-labeling.
-
-Built with **Expo SDK 57** · **React Native 0.86** · **TypeScript 6.0**
+> **Internal Telemetry Harvesting & Multimodal Spatial Dynamics Research Instrument**
 
 ---
 
-## Key Features
+## Executive Overview
 
-* **Unfiltered Raw Sensors** — Direct recording of accelerometer ($x/y/z$), gyroscope ($x/y/z$), and barometric pressure from platform hardware APIs.
-* **Independent Sparse Rows** — Event-driven storage: each sensor firing writes its own observation row so native sampling rates are preserved.
-* **Manual Ground-Truth Labeling** — Real-time tags for spatial context (`FLOOR_1`, `FLOOR_2`) and transition activities (`GOING_UPSTAIRS`, `COMING_DOWNSTAIRS`).
-* **Connected Wi-Fi Logging** — Records the associated AP only (SSID, BSSID, RSSI in dBm, frequency). No AP scan. On Android during a session this is polled every **2s** from `WifiInfo` in foreground, background, and on the lock screen.
-* **Native Android Capture** — IMU and Wi-Fi rows are written by a `RecordingImuService` foreground service (`SENSOR_DELAY_FASTEST` for IMU) so JavaScript is not on the sample path. Unrestricted battery is required to start a session.
-* **Device Presence** — Each raw row stores `appState` (`FOREGROUND` / `BACKGROUND`), `lockScreen`, and `screenOn`.
-* **Local SQLite Persistence** — Buffered writes to `wifilogger_v2.db` (WAL mode) for long collection runs.
-* **Flexible Data Export** — CSV of raw observations, or JSON with session metadata plus the full observation list.
+**Ascent** is an experimental research instrument architected for high-fidelity, continuous physical telemetry collection across contested indoor environments. Developed primarily to support an internal empirical study on indoor dead-reckoning, multi-floor spatial mapping, and vertical displacement mechanics, the system harmonizes heterogeneous sensory modalities into an aligned, time-synchronized observation corpus.
 
----
-
-## Tech Stack
-
-| Layer | Technology |
-| --- | --- |
-| **Framework** | Expo SDK 57, React Native 0.86 |
-| **Language** | TypeScript 6.0 |
-| **Navigation** | Expo Router |
-| **Sensors (JS fallback)** | `expo-sensors` (Accelerometer, Gyroscope, Barometer) |
-| **Sensors (Android)** | Custom Expo module `recording-keepalive` (`RecordingImuService`) |
-| **Networking** | `@react-native-community/netinfo`, `react-native-wifi-reborn` (connected AP only) |
-| **Background** | Native health + location foreground service on Android; `expo-task-manager` / `expo-location` kept as a leftover location-task path that is **stopped** when a session starts |
-| **Storage** | `expo-sqlite` (WAL mode) |
-| **Export** | `expo-file-system`, `expo-sharing` |
-
----
-
-## Architecture & Data Model
+Rather than treating device mobility as an abstract application state, Ascent treats the physical host as an autonomous, edge-situated telemetry probe. The architecture continuously samples high-rate inertial dynamics, atmospheric micro-pressure gradients, and ambient radio-frequency (RF) topologies while anchoring the resulting time series to researcher-annotated ground-truth semantics in real time.
 
 ```
-┌──────────────────────────────────────────────────┐
-│                    UI Layer                       │
-│                 src/app/index.tsx                 │
-│   Session Control · Floor/Activity Labels · Export │
-└────────────────────────┬─────────────────────────┘
-                         │
-              ┌──────────▼──────────┐
-              │   useWifiLogger     │  Session, permissions, export
-              │   imuCollector      │  Native service or JS sensors
-              │   useMotionDetector │  Idle-time WALKING / STATIONARY
-              └──────────┬──────────┘
-                         │
-     ┌─────────┬─────────┼─────────┬──────────────┐
-     ▼         ▼         ▼         ▼              ▼
- lib/wifi   signal    rawObs     recording     db.ts
- NetInfo +  Android   builders   context       SQLite WAL
- WifiInfo   RSSI dBm  + types    labels        + native writer
-                         │
-              modules/recording-keepalive (Android)
-              RecordingImuService · IMU + WifiInfo · SQLite
-```
-
-On Android, `startImuCollector` starts the native service. IMU samples and 2s Wi-Fi polls are written on a dedicated thread. JS is used for UI, labels, session lifecycle, and a JS `expo-sensors` fallback if the native module is unavailable.
-
-### Observation Model (Sparse Rows)
-
-Sensors record asynchronously. Empty fields are intentional (native ticks, not fused samples):
-
-```text
-timestamp                      sensorType       accelX   gyroX   pressure   RSSI   appState
-2026-08-31T22:10:00.001Z       accelerometer    0.12     -       -          -      FOREGROUND
-2026-08-31T22:10:00.018Z       gyroscope        -        0.01    -          -      FOREGROUND
-2026-08-31T22:10:01.000Z       barometer        -        -       1008.42    -      BACKGROUND
-2026-08-31T22:10:03.000Z       wifi             -        -       -          -57    BACKGROUND
-```
-
-### Timestamp Handling
-
-* **`timestamp` / `arrivalTimestamp`**: ISO-8601 UTC (millisecond precision) of app receipt.
-* **`sensorTimestamp`**: Native hardware clock in **seconds since boot** when the platform provides it. Not Unix time.
-* **`timestampSource`**: Always `arrival`.
-
-### Wi-Fi sampling (what the app actually does)
-
-* **During recording (Android native):** connected AP every **2s**, independent of walking vs stationary.
-* **UI “WIFI INTERVAL” while idle:** motion heuristic still reports 3s (walking) / 30s (stationary); that interval is **not** used for the native recording path.
-* RSSI is Android `WifiInfo` dBm only. NetInfo’s 0–100 `strength` is never stored as RSSI.
-
----
-
-## Getting Started
-
-### Prerequisites
-
-* Node.js ≥ 18
-* EAS CLI (`npm install -g eas-cli`)
-* Physical **Android** device (native IMU/Wi-Fi capture is Android-only; sensors and Wi-Fi are mocked or limited in emulators)
-
-### Installation
-
-```bash
-git clone https://github.com/GitCoder052023/Ascent.git
-cd Ascent
-npm install
-```
-
-### Device Development Builds
-
-Custom native code (`recording-keepalive`, `react-native-wifi-reborn`, foreground services) requires a **development build**, not Expo Go:
-
-```bash
-eas build --platform android --profile preview
-```
-
-Lock Ascent in Recents, grant **unrestricted battery**, and choose **Allow all the time** for location so SSID/RSSI stay readable with the screen off. OEM process killers can still create gaps.
-
----
-
-## Permissions Required
-
-| Permission | Purpose |
-| --- | --- |
-| `ACCESS_FINE_LOCATION` / `ACCESS_COARSE_LOCATION` | Required on Android to read SSID/BSSID |
-| `ACCESS_BACKGROUND_LOCATION` | Keep SSID/RSSI readable with the screen off |
-| `NEARBY_WIFI_DEVICES` | Android 13+ Wi-Fi identity access |
-| `FOREGROUND_SERVICE` / `FOREGROUND_SERVICE_HEALTH` / `FOREGROUND_SERVICE_LOCATION` | Native IMU + Wi-Fi recording service |
-| `HIGH_SAMPLING_RATE_SENSORS` | Fast IMU (`SENSOR_DELAY_FASTEST`) |
-| `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | Session will not start until unrestricted battery is allowed |
-| `ACTIVITY_RECOGNITION` | Motion-related permission on Android 10+ |
-| `POST_NOTIFICATIONS` | Persistent recording notification |
-| `WAKE_LOCK` | CPU wake lock on the JS fallback path |
-
-iOS background location is **disabled** in `app.json`. The native keepalive module is Android-only.
-
----
-
-## Data Schema Reference
-
-### Core Observation Columns (CSV / JSON)
-
-| Field | Type | Description |
-| --- | --- | --- |
-| `id` | string | Unique record UUID |
-| `sessionId` | string | Session identifier (e.g. `SESSION_001`) |
-| `timestamp` | string | ISO 8601 UTC receipt time |
-| `arrivalTimestamp` | string | Same receipt clock (ISO 8601 UTC) |
-| `sensorTimestamp` | number \| null | Platform sensor clock (seconds, not Unix) |
-| `timestampSource` | string | `arrival` |
-| `sensorType` | string | `accelerometer` \| `gyroscope` \| `barometer` \| `wifi` |
-| `floor` | string \| null | `FLOOR_1`, `FLOOR_2` |
-| `activity` | string \| null | `GOING_UPSTAIRS`, `COMING_DOWNSTAIRS` |
-| `motionState` | string \| null | Heuristic `WALKING` \| `STATIONARY` |
-| `accelerometerX/Y/Z` | number \| null | Raw acceleration ($g$) |
-| `gyroscopeX/Y/Z` | number \| null | Raw rotational velocity ($\text{rad/s}$) |
-| `barometerPressure` | number \| null | Atmospheric pressure ($\text{hPa}$); omitted if hardware is missing |
-| `ssid` / `bssid` / `signalStrength` | string / number \| null | Connected AP; RSSI is dBm |
-| `signalStrengthUnit` | string \| null | `dBm` on valid Wi-Fi rows |
-| `frequency` | number \| null | Channel frequency (MHz) |
-| `connectionType` | string \| null | `wifi` on Wi-Fi rows |
-| `platform` / `deviceModel` / `osVersion` | string \| null | Device metadata |
-| `appState` | string | `FOREGROUND` \| `BACKGROUND` |
-| `lockScreen` | string | `YES` \| `NO` \| `UNKNOWN` |
-| `screenOn` | string | `YES` \| `NO` \| `UNKNOWN` |
-
-JSON export wraps `{ sessions, observations }`. Session rows include sensor availability flags and collection notes.
-
----
-
-## Project Structure
-
-```
-src/
-├── app/                  # Main screen and layout
-├── components/           # Metrics, sections, info rows
-├── constants/            # Wi-Fi sample interval (2s while recording)
-├── hooks/                # Session orchestration, motion detector, latest-row UI
-├── lib/                  # SQLite, row builders, Wi-Fi, IMU collector, presence
-├── services/             # Legacy location-task helpers (stopped at session start)
-├── styles/               # Screen styles
-└── utils/                # Duration formatting
-modules/
-└── recording-keepalive/  # Android native IMU + WifiInfo + SQLite writer
-plugins/
-└── keep-android-imu-in-background.js
-scripts/
-└── verify-raw-observation.mjs
+                  ┌─────────────────────────────────────────┐
+                  │        PHYSICAL TELEMETRY DOMAIN        │
+                  │   RF Topology • Inertial Dynamics •     │
+                  │       Barometric Micro-Gradients        │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │    DAEMONIZED INGESTION CORE (NATIVE)   │
+                  │  Deterministic Scheduling • Lock-Free   │
+                  │   Wakelock Harness • Thread Isolation   │
+                  └─────────┬─────────────────────┬─────────┘
+                            │                     │
+      Telemetry Stream      │                     │  State Cache
+                            ▼                     ▼
+┌──────────────────────────────────────┐       ┌────────────────────────────┐
+│      PERSISTENCE ENGINE (SQLITE/WAL) │       │   RESEARCH SUPERVISION UI  │
+│  Streaming Atomic Writes • Dual-Tick │◄──────┤  Dynamic Ground-Truth Tag  │
+│  Normalization • Lossless Ring-Log   │       │  Topological Floor Anchors │
+└──────────────────────────────────────┘       └────────────────────────────┘
 ```
 
 ---
 
-## License
+## Research Origin & Release Scope
 
-[MIT](LICENSE) — Copyright 2026 Hamdan Khubaib
+> **Notice on System Generality & Open-Source Scope**
+> 
+> Ascent was conceived and deployed strictly as an **internal data collection utility** for a targeted indoor navigation and kinematic research program. It is **not** an off-the-shelf consumer application, nor is it a generalized framework built for universal application ecosystems.
+> 
+> The codebase has been open-sourced **"as-is"** to serve as an architectural reference for empirical data harvesting, edge sensor synchronization, and robust background persistence strategies. Architectural conventions reflect the specific constraints, operational edge cases, and hardware behaviors encountered during live research campaigns. Generalism should neither be expected nor inferred.
+
+---
+
+## Architectural Pillars
+
+The design of Ascent addresses the primary dilemma of mobile telemetry: achieving microsecond-grade sensor fidelity without degradation from operating system power management, thread preemption, or application execution boundaries.
+
+### 1. Decoupled Dual-Domain Execution
+Ascent enforces strict physical separation between the **High-Frequency Ingestion Layer** and the **Research Observation Interface**:
+* **The Ingestion Pipeline** is decoupled from the user-facing thread pool. Sensor streams are acquired, normalized, and committed at the lowest platform-accessible native layer, operating under isolated execution conduits.
+* **The Supervisory Interface** acts as an observer and control harness. It renders low-frequency telemetry summaries, hardware health monitors, and provides real-time labeling surfaces without introducing backpressure or scheduling jitter into the primary data path.
+
+### 2. Autonomous Telemetry Daemonization
+To guarantee uninterrupted data continuity across complex spatial transitions, Ascent incorporates an autonomous foreground execution daemon. By negotiating non-preemptible execution locks and specialized platform service profiles, the capture engine maintains continuous sampling cycles regardless of application state transitions:
+* **Background Invariance:** Telemetry collection persists unabated across active usage, background suspension, and locked-display states.
+* **State-Aware Contextual Framing:** Every ingested data frame records host lifecycle metrics (display power status, lockscreen status, foreground/background posture) to allow downstream researchers to isolate sensor noise caused by OS energy governors.
+
+### 3. Unified Multimodal Telemetry Grid
+Ascent continuously synthesizes four complementary sensory layers:
+* **High-Rate Inertial Kinetics (IMU):** 6-DoF continuous angular velocity and linear acceleration vectors capturing human locomotion, gait signatures, and kinetic impulses.
+* **Atmospheric Micro-Altimetry:** Barometric pressure time-series sensitive to sub-meter atmospheric differentials, vital for resolving vertical displacement vectors (elevators, escalators, and stairwells).
+* **Ambient RF Topology:** Periodic interrogation of connected wireless access nodes (BSSID, SSID, carrier frequency, and signal strength attenuations) providing coarse-grained spatial localization anchors.
+* **Autonomous Locomotion Classifier:** Continuous motion-state tracking classifying stationary versus kinetic phases to establish operational baselines.
+
+### 4. Deterministic Dual-Clock Synchronization
+Data integrity in distributed sensor fusion hinges on temporal determinism. Ascent implements a dual-clock timestamping methodology:
+* **Hardware Monotonic Delta (`sensorTimestamp`):** High-precision ticks sourced directly from native sensor hardware drivers, immune to system clock drifts and network synchronizations.
+* **Wall-Clock Coordinated Standard (`timestamp` / `arrivalTimestamp`):** ISO-8601 UTC references stamped upon application arrival, allowing cross-device analytical collation with external telemetry baselines.
+
+---
+
+## Core System Architecture
+
+```mermaid
+flowchart TD
+    subgraph PhysicalSensors [" Physical Layer "]
+        IMU["6-DoF Inertial Sensors\n(Accel / Gyro @ High-Rate)"]
+        BARO["Barometric Sensor\n(Ambient Pressure Gradients)"]
+        WIFI["RF Transceiver\n(BSSID / RSSI / Frequency)"]
+    end
+
+    subgraph NativeKernel [" Native Ingestion Kernel "]
+        Service["Foreground Execution Service\n(Autonomous WakeLock Harness)"]
+        SyncEngine["Temporal Alignment &\nState-Vector Aggregator"]
+    end
+
+    subgraph MetadataContext [" Ground-Truth Context "]
+        FloorTag["Spatial Floor Markers\n(Topological Reference)"]
+        ActivityTag["Kinematic Transition Markers\n(Ascent / Descent Vectors)"]
+        HostState["Host Device Presence\n(Screen / Power / Lock Status)"]
+    end
+
+    subgraph PersistenceLayer [" Storage & Analytical Pipeline "]
+        WAL["Transactional Storage Engine\n(SQLite WAL Channel)"]
+        Dataset["Normalized Analytical Export\n(CSV / Structured Data Stream)"]
+    end
+
+    IMU --> Service
+    BARO --> Service
+    WIFI --> Service
+
+    Service --> SyncEngine
+    FloorTag --> SyncEngine
+    ActivityTag --> SyncEngine
+    HostState --> SyncEngine
+
+    SyncEngine -->|Atomic Batch Commit| WAL
+    WAL -->|Structured Compilation| Dataset
+```
+
+---
+
+## Data Schema & Observation Modeling
+
+Ascent records physical reality as discrete, schema-enforced observations within an atomic transactional persistence engine. Each capture frame encapsulates the full operational state vector:
+
+| Telemetry Domain | Observation Attributes | Conceptual Purpose |
+| :--- | :--- | :--- |
+| **Temporal Coordinate** | `timestamp`, `arrivalTimestamp`, `sensorTimestamp` | Cross-sensor alignment, jitter compensation, and chronometric fidelity. |
+| **Inertial Kinetic** | `accelerometer[X,Y,Z]`, `gyroscope[X,Y,Z]` | Dynamic human locomotion modeling, step detection, and micro-movement analysis. |
+| **Barometric Pressure** | `barometerPressure` (hPa / mbar) | Differential altimetry, stair navigation vectors, and vertical displacement profiling. |
+| **RF Environment** | `bssid`, `ssid`, `signalStrength` (dBm), `frequency` | Spatial fingerprinting, beacon attenuation curves, and indoor dead-reckoning support. |
+| **Ground-Truth Anchor** | `floor`, `activity`, `motionState` | Supervised labels for training downstream machine learning and spatial classification models. |
+| **System Provenance** | `appState`, `lockScreen`, `screenOn`, `deviceModel` | Environmental telemetry context and hardware governor characterization. |
+
+---
+
+## Primary Research Applications
+
+Data harvested via Ascent is purpose-built to advance research in:
+
+1. **Vertical Odometry & Multi-Story Localization:** Resolving floor-level ambiguity in indoor facilities where satellite-based positioning is unavailable or degraded.
+2. **Pedestrian Dead-Reckoning (PDR):** Fusing high-frequency inertial kinematics with barometric delta curves to track continuous 3D spatial trajectories.
+3. **RF Signal Attenuation & Multipath Characterization:** Investigating structural absorption, wall occlusion, and floor boundary effects on 2.4 GHz and 5 GHz electromagnetic propagation.
+4. **Behavioral Kinetic Classification:** Validating model inference accuracy for directional stair negotiation, locomotion transitions, and stationary-to-movement boundaries.
+
+---
+
+## License & Operational Terms
+
+This repository is distributed under the terms defined in the [LICENSE](LICENSE) file. As an artifact of an internal research initiative, Ascent is released without warranties of commercial fitness or turnkey deployment guarantees. Research teams deploying this tool are encouraged to adapt the native ingestion harness to their specific hardware profiles and collection protocols.
