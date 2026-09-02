@@ -7,6 +7,7 @@ import {
   clearAllMeasurementsFromDb,
   exportDatasetFromDb,
   getAllMeasurements,
+  isNativeOwningDatabase,
   saveMeasurementBuffered,
   saveRawObservationBuffered,
   type Floor,
@@ -63,6 +64,9 @@ export async function persistWifiMeasurement(
   item: Measurement,
   labelsOverride?: Partial<LabelContext>
 ): Promise<void> {
+  if (isNativeOwningDatabase()) {
+    return;
+  }
   const labels = { ...getCachedLabels(), ...labelsOverride };
   const device: DeviceMeta = {
     platform: item.platform,

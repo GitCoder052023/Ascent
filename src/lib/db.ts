@@ -249,6 +249,9 @@ async function insertBatch(db: SQLite.SQLiteDatabase, items: Measurement[]) {
 }
 
 export async function flushWriteBuffer(): Promise<void> {
+  if (nativeOwnsDatabase) {
+    return;
+  }
   if (flushTimer) {
     clearTimeout(flushTimer);
     flushTimer = null;
@@ -286,6 +289,9 @@ export async function flushWriteBuffer(): Promise<void> {
 }
 
 export async function saveMeasurementBuffered(item: Measurement): Promise<void> {
+  if (nativeOwnsDatabase) {
+    return;
+  }
   writeBuffer.push(item);
 
   if (writeBuffer.length >= 10) {
@@ -489,6 +495,9 @@ async function insertRawBatch(db: SQLite.SQLiteDatabase, items: RawObservation[]
 }
 
 export async function flushRawWriteBuffer(): Promise<void> {
+  if (nativeOwnsDatabase) {
+    return;
+  }
   if (rawFlushTimer) {
     clearTimeout(rawFlushTimer);
     rawFlushTimer = null;
@@ -528,6 +537,9 @@ export async function flushRawWriteBuffer(): Promise<void> {
 }
 
 export async function saveRawObservationBuffered(item: RawObservation): Promise<void> {
+  if (nativeOwnsDatabase) {
+    return;
+  }
   rawWriteBuffer.push(item);
 
   if (rawWriteBuffer.length >= RAW_FLUSH_SIZE) {

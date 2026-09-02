@@ -1,10 +1,6 @@
 import * as TaskManager from "expo-task-manager";
 import * as Location from "expo-location";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
-import { flushRawWriteBuffer, flushWriteBuffer, Floor } from "../lib/db";
-import { createMeasurement, persistWifiMeasurement } from "../lib/dataset";
-import { KEY_LAST_MOTION } from "../hooks/useMotionDetector";
+import { flushRawWriteBuffer, flushWriteBuffer, type Floor } from "../lib/db";
 import { ensureImuCollectorAlive } from "../lib/imuCollector";
 import {
   hydrateLabelsFromStorage,
@@ -15,87 +11,31 @@ import {
 export const WIFI_LOGGER_BACKGROUND_TASK = "wifi-logger-background-task";
 export { KEY_ACTIVE_FLOOR };
 
-const MIN_BACKGROUND_SAMPLE_MS = 2000;
-const SAMPLE_IN_FLIGHT_TIMEOUT_MS = 30000;
-
 let activeFloor: Floor = "FLOOR_1";
-let lastBackgroundSampleAt = 0;
-let sampleInFlight = false;
-let sampleInFlightStartedAt = 0;
 
 export function setBackgroundFloor(floor: Floor) {
   activeFloor = floor;
   setCachedFloor(floor);
 }
 
-TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async ({ data, error }) => {
-  if (error) {
-    console.error("Background task error:", error);
-    return;
-  }
-
-  const now = Date.now();
-  if (sampleInFlight && now - sampleInFlightStartedAt > SAMPLE_IN_FLIGHT_TIMEOUT_MS) {
-    sampleInFlight = false;
-  }
-
-  if (sampleInFlight || now - lastBackgroundSampleAt < MIN_BACKGROUND_SAMPLE_MS) {
-    return;
-  }
-
-  sampleInFlight = true;
-  sampleInFlightStartedAt = now;
-  lastBackgroundSampleAt = now;
-
+/**
+ * Older builds registered a location FGS that sampled Wi-Fi from JS.
+ * Capture now lives in RecordingImuService. This task only revives native
+ * IMU if an old registration is still alive, and never writes rows from JS.
+ */
+TaskManager.defineTask(WIFI_LOGGER_BACKGROUND_TASK, async () => {
   try {
     const labels = await hydrateLabelsFromStorage();
-    await ensureImuCollectorAlive().catch(() => {});
-
-    const wifi = await getConnectedWifi();
-    let isMoving = false;
-
-    if (data && typeof data === "object" && "locations" in data && Array.isArray((data as any).locations)) {
-      const locations = (data as any).locations as Location.LocationObject[];
-      for (const loc of locations) {
-        if (loc.coords && typeof loc.coords.speed === "number" && loc.coords.speed > 0.2) {
-          isMoving = true;
-          break;
-        }
-      }
-    }
-
-    if (!isMoving) {
-      try {
-        const storedLastMotion = await AsyncStorage.getItem(KEY_LAST_MOTION);
-        if (storedLastMotion) {
-          const timestamp = parseInt(storedLastMotion, 10);
-          if (!isNaN(timestamp) && now - timestamp < 8000) {
-            isMoving = true;
-          }
-        }
-      } catch {
-        // Ignore read errors
-      }
-    }
-
-    const currentFloor =
+    const floor =
       labels.floor === "FLOOR_1" || labels.floor === "FLOOR_2"
         ? labels.floor
         : activeFloor;
-
-    const processed = processWifiSignal(wifi);
-    const item = createMeasurement(currentFloor, wifi, processed);
-    await persistWifiMeasurement(item, {
-      sessionId: labels.sessionId,
-      activity: labels.activity,
-      motionState: isMoving ? "WALKING" : labels.motionState,
-    });
-    await flushWriteBuffer();
-    await flushRawWriteBuffer();
+    setCachedFloor(floor);
+    if (labels.recording || labels.sessionId) {
+      await ensureImuCollectorAlive().catch(() => {});
+    }
   } catch (err) {
-    console.error("Failed background sample tick:", err);
-  } finally {
-    sampleInFlight = false;
+    console.error("Failed background keep-alive tick:", err);
   }
 });
 

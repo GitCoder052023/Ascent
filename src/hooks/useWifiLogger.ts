@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  Alert,
-  AppState,
-  PermissionsAndroid,
-  Platform,
-} from "react-native";
+import { Alert, AppState, Platform } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import * as Device from "expo-device";
 import {
   clearMeasurements,
   createMeasurement,
@@ -17,7 +11,6 @@ import {
   type Measurement,
 } from "../lib/dataset";
 import { getConnectedWifi, processWifiSignal, type WifiSnapshot } from "../lib/wifi";
-import { nativeAndroidSignal } from "../lib/signalEngine";
 import { EMPTY_WIFI, WIFI_SAMPLE_INTERVAL_MS } from "../constants/app";
 import { getDevicePresence, type DevicePresence } from "../lib/devicePresence";
 import { useMotionDetector } from "./useMotionDetector";
@@ -36,7 +29,6 @@ import {
   nextSessionId,
 } from "../lib/db";
 import { formatIsoMillis } from "../lib/rawObservation";
-import * as Location from "expo-location";
 import {
   hydrateLabelsFromStorage,
   KEY_LOCKED_SSID,
@@ -49,11 +41,7 @@ import {
   setCachedWifi,
 } from "../lib/recordingContext";
 import { PLATFORM_SENSOR_NOTES, type ActivityLabel } from "../lib/rawTypes";
-import {
-  probeSensorAvailability,
-  requestMotionPermissions,
-  useRawSensorCollector,
-} from "./useRawSensorCollector";
+import { probeSensorAvailability, useRawSensorCollector } from "./useRawSensorCollector";
 import {
   isImuCollectorRunning,
   isUsingNativeImu,
@@ -62,20 +50,29 @@ import {
   syncNativeRecordingLabels,
 } from "../lib/imuCollector";
 import {
-  isIgnoringBatteryOptimizations,
   isNativeImuAvailable,
   isNativeImuRecording,
-  requestIgnoreBatteryOptimizations,
   subscribeNativeImuLatest,
 } from "../../modules/recording-keepalive";
+import { getDeviceMeta } from "../lib/deviceMeta";
+import {
+  ensureUnrestrictedBattery,
+  requestRecordingPermissions,
+} from "../permissions/recordingPermissions";
+import { presenceFromNativeLatest, wifiFromNativeLatest } from "../capture/nativeLatest";
 
 const KEY_STARTED = "@wifi_logger_started";
+const DEVICE_META = getDeviceMeta();
 
-const DEVICE_META = {
-  platform: Platform.OS,
-  deviceModel: Device.modelName ?? null,
-  osVersion: Platform.Version?.toString() ?? null,
-};
+function cacheWifiFields(current: WifiSnapshot) {
+  setCachedWifi({
+    ssid: current.ssid,
+    bssid: current.bssid,
+    signalStrength: current.signalStrength,
+    signalStrengthUnit: current.signalStrengthUnit,
+    frequency: current.frequency,
+  });
+}
 
 export function useWifiLogger() {
   const [hydrated, setHydrated] = useState(false);
@@ -115,6 +112,7 @@ export function useWifiLogger() {
   const lastSampleKey = useRef<string | null>(null);
   const startingRef = useRef(false);
   const rawCollector = useRawSensorCollector();
+  const jsWifiSampling = recording && !nativeCapture && !isNativeImuAvailable();
 
   function setFloor(next: Floor) {
     setFloorState(next);
@@ -191,21 +189,18 @@ export function useWifiLogger() {
   async function restoreRecordingIfNeeded() {
     try {
       if (Platform.OS === "android") {
-        // Location FGS restarts the Activity in a loop. Native IMU FGS is the keep-alive.
         if (await isBackgroundLoggingActiveAsync()) {
           await stopBackgroundLoggingAsync().catch(() => {});
         }
       }
 
       const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
-      const storedNetwork = await AsyncStorage.getItem(KEY_LOCKED_SSID);
       const nativeOn = isNativeImuRecording();
       if (!storedStarted && !nativeOn) {
         return;
       }
 
-      setRecording(true);
-      setCachedRecording(true);
+      const storedNetwork = await AsyncStorage.getItem(KEY_LOCKED_SSID);
       if (storedStarted) {
         const parsed = parseInt(storedStarted, 10);
         if (!isNaN(parsed)) {
@@ -223,6 +218,11 @@ export function useWifiLogger() {
       if (!isImuCollectorRunning()) {
         await startImuCollector(DEVICE_META);
       }
+      if (!isImuCollectorRunning() && !isNativeImuRecording()) {
+        return;
+      }
+      setRecording(true);
+      setCachedRecording(true);
       setNativeCapture(isUsingNativeImu() || isNativeImuRecording());
     } catch {
       // Ignore restore errors; the user can start a new session.
@@ -247,34 +247,17 @@ export function useWifiLogger() {
       return;
     }
     return subscribeNativeImuLatest((event) => {
-      if (event.appState || event.lockScreen || event.screenOn) {
-        setPresence({
-          appState: event.appState === "FOREGROUND" ? "FOREGROUND" : "BACKGROUND",
-          lockScreen:
-            event.lockScreen === "YES" || event.lockScreen === "NO"
-              ? event.lockScreen
-              : "UNKNOWN",
-          screenOn:
-            event.screenOn === "YES" || event.screenOn === "NO" ? event.screenOn : "UNKNOWN",
-        });
+      const nextPresence = presenceFromNativeLatest(event);
+      if (nextPresence) {
+        setPresence(nextPresence);
       }
-      if (!event.wifiConnectionState) {
+      const nextWifi = wifiFromNativeLatest(event);
+      if (!nextWifi) {
         return;
       }
-      const connected = event.wifiConnectionState === "CONNECTED";
-      const nextWifi = {
-        ssid: event.wifiSsid ?? null,
-        bssid: event.wifiBssid ?? null,
-        signalStrength: event.wifiRssi ?? null,
-        signalStrengthUnit: event.wifiRssi != null ? ("dBm" as const) : null,
-        frequency: event.wifiFrequency ?? null,
-      };
-      setWifi({
-        connectionState: connected ? "CONNECTED" : "DISCONNECTED",
-        ...nextWifi,
-      });
-      setCachedWifi(nextWifi);
-      setLastProcessed(nativeAndroidSignal(event.wifiRssi ?? null, event.wifiFrequency ?? null));
+      setWifi(nextWifi.snapshot);
+      cacheWifiFields(nextWifi.snapshot);
+      setLastProcessed(nextWifi.processed);
       if (event.wifiSsidMismatch) {
         setPaused(true);
         setNotice(
@@ -286,7 +269,7 @@ export function useWifiLogger() {
 
   /* eslint-disable react-hooks/exhaustive-deps */
   useEffect(() => {
-    if (!recording || nativeCapture) {
+    if (!jsWifiSampling) {
       return;
     }
 
@@ -297,160 +280,28 @@ export function useWifiLogger() {
         clearInterval(interval.current);
       }
     };
-  }, [recording, floor, network, nativeCapture]);
+  }, [jsWifiSampling, floor, network]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
   async function refresh() {
     try {
       const current = await getConnectedWifi();
       setWifi(current);
-      setCachedWifi({
-        ssid: current.ssid,
-        bssid: current.bssid,
-        signalStrength: current.signalStrength,
-        signalStrengthUnit: current.signalStrengthUnit,
-        frequency: current.frequency,
-      });
-
-      const processed = processWifiSignal(current);
-      setLastProcessed(processed);
+      cacheWifiFields(current);
+      setLastProcessed(processWifiSignal(current));
     } catch {
       setWifi(EMPTY_WIFI);
     }
   }
 
-  async function requestPermission() {
-    if (Platform.OS === "android") {
-      const permissions: string[] = [
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-        PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
-      ];
-      if (typeof Platform.Version === "number" && Platform.Version >= 33) {
-        const postNotifications = PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS;
-        if (postNotifications) {
-          permissions.push(postNotifications);
-        }
-        permissions.push("android.permission.NEARBY_WIFI_DEVICES");
-      }
-
-      const result = await PermissionsAndroid.requestMultiple(
-        permissions as Parameters<typeof PermissionsAndroid.requestMultiple>[0]
-      );
-      if (result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] !== PermissionsAndroid.RESULTS.GRANTED) {
-        setNotice(
-          "Location permission is off. Wi-Fi fields may be empty; IMU recording can still continue."
-        );
-      }
-
-      if (typeof Platform.Version === "number" && Platform.Version >= 29) {
-        const fineGranted =
-          result[PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION] ===
-          PermissionsAndroid.RESULTS.GRANTED;
-        if (fineGranted) {
-          await requestBackgroundLocation();
-        }
-      }
-    }
-    await requestMotionPermissions();
-
-    if (
-      Platform.OS === "android" &&
-      typeof Platform.Version === "number" &&
-      Platform.Version >= 29
-    ) {
-      const activityRecognition = PermissionsAndroid.PERMISSIONS.ACTIVITY_RECOGNITION;
-      if (activityRecognition) {
-        await PermissionsAndroid.request(activityRecognition).catch(() => null);
-      }
-    }
-    return true;
-  }
-
-  async function requestBackgroundLocation() {
-    if (await hasBackgroundLocation()) {
+  async function sample() {
+    if (isNativeImuAvailable() || nativeCapture) {
       return;
     }
-    const background =
-      PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION ??
-      "android.permission.ACCESS_BACKGROUND_LOCATION";
-    await new Promise<void>((resolve) => {
-      Alert.alert(
-        "Allow location all the time",
-        "Android hides SSID and RSSI when the screen is off unless this app has background location. Choose Allow all the time on the next screen.",
-        [
-          { text: "Skip", style: "cancel", onPress: () => resolve() },
-          {
-            text: "Continue",
-            onPress: () => {
-              void PermissionsAndroid.request(background)
-                .catch(() => null)
-                .finally(() => resolve());
-            },
-          },
-        ]
-      );
-    });
-  }
-
-  async function hasBackgroundLocation(): Promise<boolean> {
-    if (Platform.OS !== "android") {
-      return true;
-    }
-    if (typeof Platform.Version === "number" && Platform.Version < 29) {
-      return true;
-    }
-    try {
-      const background = await Location.getBackgroundPermissionsAsync();
-      if (background.status === "granted") {
-        return true;
-      }
-    } catch {
-      // Fall through to the platform permission check.
-    }
-    try {
-      const permission =
-        PermissionsAndroid.PERMISSIONS.ACCESS_BACKGROUND_LOCATION ??
-        "android.permission.ACCESS_BACKGROUND_LOCATION";
-      return await PermissionsAndroid.check(permission);
-    } catch {
-      return false;
-    }
-  }
-
-  async function ensureUnrestrictedBattery(): Promise<boolean> {
-    if (Platform.OS !== "android" || isIgnoringBatteryOptimizations()) {
-      return true;
-    }
-    return await new Promise((resolve) => {
-      Alert.alert(
-        "Unrestricted battery required",
-        "Lock-screen IMU and Wi-Fi will stop unless this app is exempt from battery optimization. Recording will not start until you allow it.",
-        [
-          { text: "Cancel", style: "cancel", onPress: () => resolve(false) },
-          {
-            text: "Allow",
-            onPress: () => {
-              void requestIgnoreBatteryOptimizations().finally(() => {
-                resolve(isIgnoringBatteryOptimizations());
-              });
-            },
-          },
-        ]
-      );
-    });
-  }
-
-  async function sample() {
     try {
       const current = await getConnectedWifi();
       setWifi(current);
-      setCachedWifi({
-        ssid: current.ssid,
-        bssid: current.bssid,
-        signalStrength: current.signalStrength,
-        signalStrengthUnit: current.signalStrengthUnit,
-        frequency: current.frequency,
-      });
+      cacheWifiFields(current);
 
       if (network && current.ssid && current.ssid !== network) {
         setPaused(true);
@@ -503,7 +354,7 @@ export function useWifiLogger() {
       if (isNativeImuRecording() || isImuCollectorRunning()) {
         await stopImuCollector().catch(() => {});
       }
-      if (!(await requestPermission())) {
+      if (!(await requestRecordingPermissions(setNotice))) {
         return;
       }
       if (!(await ensureUnrestrictedBattery())) {
@@ -556,8 +407,6 @@ export function useWifiLogger() {
 
       let backgroundNotice: string | null = null;
       if (Platform.OS === "android") {
-        // Tear down any leftover location FGS from older builds. Starting it
-        // next to the IMU service recreates the Activity until recording is aborted.
         await stopBackgroundLoggingAsync().catch(() => {});
       }
 
@@ -643,7 +492,12 @@ export function useWifiLogger() {
 
     setPaused(false);
     setNotice(null);
-    await sample();
+    setWifi(current);
+    cacheWifiFields(current);
+    setLastProcessed(processWifiSignal(current));
+    if (!isNativeImuAvailable() && !nativeCapture) {
+      await sample();
+    }
   }
 
   function clear() {

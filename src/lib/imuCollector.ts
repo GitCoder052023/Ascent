@@ -12,39 +12,28 @@ import {
   subscribeNativeImuLatest,
   updateNativeImuLabels,
 } from "../../modules/recording-keepalive";
+import { attachJsImuSensors } from "../capture/jsImuFallback";
+import {
+  EMPTY_LATEST_RAW,
+  MOTION_DETECTOR_INTERVAL_MS,
+  type LatestRaw,
+} from "../capture/imuTypes";
 import {
   closeJsDatabase,
   flushRawWriteBuffer,
-  saveRawObservationBuffered,
   setNativeOwnsDatabase,
 } from "./db";
-import {
-  createAccelerometerObservation,
-  createBarometerObservation,
-  createGyroscopeObservation,
-  type DeviceMeta,
-} from "./rawObservation";
+import type { DeviceMeta } from "./rawObservation";
 import { getCachedLabels, setCachedMotionState } from "./recordingContext";
 import type { SensorAvailability } from "./rawTypes";
 
-export const ACCEL_REQUESTED_INTERVAL_MS = 20;
-export const GYRO_REQUESTED_INTERVAL_MS = 20;
-export const BARO_REQUESTED_INTERVAL_MS = 200;
-export const MOTION_DETECTOR_INTERVAL_MS = 100;
-
-export type LatestRaw = {
-  accelerometer: string | null;
-  gyroscope: string | null;
-  barometer: string | null;
-  wifi: string | null;
-};
-
-const emptyLatest: LatestRaw = {
-  accelerometer: null,
-  gyroscope: null,
-  barometer: null,
-  wifi: null,
-};
+export {
+  ACCEL_REQUESTED_INTERVAL_MS,
+  BARO_REQUESTED_INTERVAL_MS,
+  GYRO_REQUESTED_INTERVAL_MS,
+  MOTION_DETECTOR_INTERVAL_MS,
+  type LatestRaw,
+} from "../capture/imuTypes";
 
 let startChain: Promise<unknown> = Promise.resolve();
 let running = false;
@@ -53,11 +42,9 @@ let nativeLatestUnsub: (() => void) | null = null;
 let startGeneration = 0;
 let deviceMeta: DeviceMeta | null = null;
 let subscriptions: { remove: () => void }[] = [];
-let latestLocal: LatestRaw = { ...emptyLatest };
+let latestLocal: LatestRaw = { ...EMPTY_LATEST_RAW };
 let lastUi = 0;
 let lastSampleAt = 0;
-let gravityEstimate = 1;
-let lastWalkAt = 0;
 const latestListeners = new Set<(latest: LatestRaw) => void>();
 
 export async function probeSensorAvailability(): Promise<SensorAvailability> {
@@ -134,25 +121,6 @@ function publishLatest(partial: Partial<LatestRaw>) {
   }
 }
 
-function attachSensor(
-  available: boolean,
-  start: () => { remove: () => void }
-) {
-  if (!available || !running) {
-    return;
-  }
-  try {
-    const subscription = start();
-    if (!running) {
-      subscription.remove();
-      return;
-    }
-    subscriptions.push(subscription);
-  } catch {
-    // Leave this sensor off; others can continue.
-  }
-}
-
 function clearSubscriptions() {
   for (const subscription of subscriptions) {
     try {
@@ -183,8 +151,9 @@ function ensureNativeLatestSubscription() {
 }
 
 /**
- * IMU collection is a process singleton so Activity pause/remount (the Android
- * "app closed" flash when the location FGS starts) does not tear down listeners.
+ * IMU collection is a process singleton so Activity pause/remount does not
+ * tear down listeners. On Android, RecordingImuService is the only capture
+ * engine. JS sensors are used only when the native module is absent.
  */
 export async function startImuCollector(device: DeviceMeta): Promise<SensorAvailability> {
   const run = startChain.then(
@@ -208,14 +177,14 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
     return available;
   }
 
-  latestLocal = { ...emptyLatest };
+  latestLocal = { ...EMPTY_LATEST_RAW };
   lastUi = 0;
   lastSampleAt = Date.now();
 
   if (isNativeImuAvailable()) {
     const labels = getCachedLabels();
-    setNativeOwnsDatabase(true);
     await closeJsDatabase();
+    setNativeOwnsDatabase(true);
     const started = await startNativeImuRecording({
       sessionId: labels.sessionId,
       floor: labels.floor,
@@ -233,97 +202,21 @@ async function startImuCollectorUnlocked(device: DeviceMeta): Promise<SensorAvai
     }
     await stopNativeImuRecording().catch(() => {});
     setNativeOwnsDatabase(false);
+    running = false;
+    usingNativeImu = false;
+    throw new Error("NATIVE_IMU_START_FAILED");
   }
 
   usingNativeImu = false;
   acquireCpuWakeLock();
   clearSubscriptions();
-
-  attachSensor(available.accelerometerAvailable, () => {
-    Accelerometer.setUpdateInterval(ACCEL_REQUESTED_INTERVAL_MS);
-    return Accelerometer.addListener(({ x, y, z, timestamp }) => {
-      if (!running || !deviceMeta) return;
-      try {
-        const labels = getCachedLabels();
-        const arrivalMs = Date.now();
-        const row = createAccelerometerObservation(
-          arrivalMs,
-          typeof timestamp === "number" ? timestamp : null,
-          x,
-          y,
-          z,
-          labels,
-          deviceMeta
-        );
-        void saveRawObservationBuffered(row).catch(() => {});
-        lastSampleAt = arrivalMs;
-        gravityEstimate = 0.85 * gravityEstimate + 0.15 * Math.sqrt(x * x + y * y + z * z);
-        const linear = Math.abs(Math.sqrt(x * x + y * y + z * z) - gravityEstimate);
-        if (linear > 0.045) {
-          lastWalkAt = arrivalMs;
-        }
-        setCachedMotionState(arrivalMs - lastWalkAt < 6000 ? "WALKING" : "STATIONARY");
-        publishLatest({ accelerometer: row.timestamp });
-      } catch {
-        // Continue other sensors.
-      }
-    });
-  });
-
-  attachSensor(available.gyroscopeAvailable, () => {
-    Gyroscope.setUpdateInterval(GYRO_REQUESTED_INTERVAL_MS);
-    return Gyroscope.addListener(({ x, y, z, timestamp }) => {
-      if (!running || !deviceMeta) return;
-      try {
-        const labels = getCachedLabels();
-        const arrivalMs = Date.now();
-        const row = createGyroscopeObservation(
-          arrivalMs,
-          typeof timestamp === "number" ? timestamp : null,
-          x,
-          y,
-          z,
-          labels,
-          deviceMeta
-        );
-        void saveRawObservationBuffered(row).catch(() => {});
-        lastSampleAt = arrivalMs;
-        publishLatest({ gyroscope: row.timestamp });
-      } catch {
-        // Continue other sensors.
-      }
-    });
-  });
-
-  attachSensor(available.barometerAvailable, () => {
-    Barometer.setUpdateInterval(BARO_REQUESTED_INTERVAL_MS);
-    return Barometer.addListener((reading) => {
-      if (!running || !deviceMeta) return;
-      try {
-        const pressure = reading.pressure;
-        if (typeof pressure !== "number" || !Number.isFinite(pressure)) {
-          return;
-        }
-        const labels = getCachedLabels();
-        const arrivalMs = Date.now();
-        const timestamp =
-          "timestamp" in reading && typeof reading.timestamp === "number"
-            ? reading.timestamp
-            : null;
-        const row = createBarometerObservation(
-          arrivalMs,
-          timestamp,
-          pressure,
-          labels,
-          deviceMeta
-        );
-        void saveRawObservationBuffered(row).catch(() => {});
-        lastSampleAt = arrivalMs;
-        publishLatest({ barometer: row.timestamp });
-      } catch {
-        // Continue other sensors.
-      }
-    });
+  subscriptions = attachJsImuSensors(available, {
+    isRunning: () => running && generation === startGeneration,
+    getDevice: () => deviceMeta,
+    publishLatest,
+    markSample: (arrivalMs) => {
+      lastSampleAt = arrivalMs;
+    },
   });
 
   return available;
@@ -345,7 +238,7 @@ export async function ensureImuCollectorAlive(): Promise<void> {
   }
 
   const device = deviceMeta ?? defaultDevice();
-  if (usingNativeImu || isNativeImuAvailable()) {
+  if (isNativeImuAvailable()) {
     if (nativeImuLastSampleAgeMs() > 1500) {
       await startImuCollector(device);
     } else {
