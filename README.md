@@ -14,7 +14,7 @@
 > * **Advancing to Phase 2 (All Code in this Repo):** Research is progressing into **Phase 2: Building the Supervised Machine Learning Classifier**. All code for Phase 2—including data sanitization, multimodal feature engineering, and model training—will be developed and maintained directly within this repository.
 > * **Foreground-Only Collection Strategy:** The author is **not fixing Ascent itself** right now. Because Ascent's principal bottleneck is background unreliability, dataset generation is proceeding pragmatically by running the capture tool strictly in the **foreground**.
 > * **Generalized Training Pipeline:** The long-term objective is to provide a turnkey framework enabling researchers and developers to harvest their own spatial datasets and train custom floor-detection classifiers for their own multi-story facilities.
-> * **Open-Source Call for Contributions:** Contributions from the open-source community are warmly invited—especially to help resolve Ascent's native background daemon issues and repair the malfunctioning device presence module! Review the [Contributing Guide](CONTRIBUTING.md) to get started.
+> * **Community Call to Maintain Phase 1 (Ascent Core):** While the author focuses on building Phase 2 (ML classification), **the open-source community is invited to actively maintain and improve Phase 1—the Ascent application and its data collection engine**. Community stewardship will turn this experimental prototype into a smooth, reliable, and generalized data collection instrument for the entire research community. Review the [Contributing Guide](CONTRIBUTING.md) to get involved!
 > 
 > **Critical Known Deficiencies in Ascent:**
 > * **Heavily "Vibecoded" / AI-Generated Codebase:** The major code written to build this tool was generated and orchestrated by **AI agents**, and the application was **majorly developed by AI**. It was rapidly assembled via prompt-driven workflows rather than manually audited production engineering, resulting in architectural idiosyncrasies and fragile edge cases.
@@ -221,12 +221,15 @@ The long-term vision of this independent project is to build an open, self-servi
 * **Universal Telemetry Harvesting:** Providing an open workflow where anyone can record their own paired RF and kinetic telemetry across multi-story buildings.
 * **Custom Classifier Training:** Enabling researchers and developers to train their own tailored floor-prediction models on their own custom spaces (e.g., custom office layouts, gym facilities, or residential buildings).
 
-### 3. Open-Source Call for Contributions (Fixing Ascent)
-Ascent’s native collection engine is open-source, and help from the online developer community is enthusiastically welcomed! If you have experience in native Android development, low-level sensor pipelines, or modern Expo/React Native modules, pull requests are warmly invited to help fix:
-1. **Background Stability & Battery Efficiency:** Re-architecting the background execution daemon (`RecordingImuService`) to eliminate excessive wake-lock power drain and prevent OS task killers from halting collection when backgrounded.
-2. **Device Presence & State-Vector Module:** Debugging and repairing the broken module responsible for accurately resolving host application state (`appState`: foreground vs. background) and hardware display status (`lockScreen` and `screenOn`).
+### 3. Open-Source Call to Maintain Phase 1 (Ascent Collection Engine)
+Because the author’s active development bandwidth is dedicated to **Phase 2 (building the ML classifier and generalized framework)**, we are explicitly inviting the **open-source community to take on the maintenance and evolution of Phase 1**—the Ascent mobile application and its native telemetry collection engine.
 
-Please consult the [Contributing Guide](CONTRIBUTING.md) for branch naming conventions, workflow steps, and development setup.
+Ascent was engineered as a fast, internal research prototype and carries significant experimental debt. We invite open-source engineers, mobile developers, and sensor enthusiasts to help maintain Phase 1 and build a **smooth, robust, and generalized data-collection experience** for the entire community:
+1. **Background Reliability & Battery Optimization:** Re-architect the native background execution service (`RecordingImuService`) to eliminate excessive wake-lock battery drain, prevent aggressive OEM task-killers from terminating capture sessions, and enable reliable background collection.
+2. **Device Presence & State-Vector Module:** Debug and repair the broken lifecycle detection module responsible for accurately logging application status (`appState`: foreground vs. background) and display states (`lockScreen` and `screenOn`).
+3. **Hardware Generalization & Smooth UX:** Broaden device compatibility across diverse Android chipsets and OEMs, harden high-rate IMU ring-buffers, and refine session management/exporting to make custom dataset collection seamless for non-technical researchers.
+
+By actively maintaining Phase 1, the community can help transform Ascent into an indispensable, turnkey sensor collection instrument. Please review the [Contributing Guide](CONTRIBUTING.md) for contribution tracks, technical details, and PR submission guidelines.
 
 ---
 

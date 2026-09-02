@@ -4,23 +4,25 @@ Thank you for your interest in contributing to **Ascent**! Whether you are an op
 
 ---
 
-## 1. Project Context & Focus Areas
+## 1. Project Context & Contribution Tracks
 
-Ascent is currently operating under an independent roadmap transitioning into **Phase 2 (Machine Learning Classification)** while maintaining an open call for community contributions to fix **Ascent's native data collection core**.
+Ascent is currently advancing through an independent roadmap. Because the primary maintainer’s active development bandwidth is dedicated to **Phase 2 (Machine Learning Classification & generalized training pipelines)**, we are **actively inviting the open-source community to step up and maintain Phase 1—the Ascent mobile application itself and its native data collection engine**.
 
-Contributions generally fall into one of two major tracks:
+Our shared goal is to evolve Phase 1 from a raw, experimental internal prototype into a **smooth, robust, and generalized data-collection tool** that researchers, students, and developers across the world can easily deploy on any Android device to build their own spatial datasets.
 
-### Track A: Ascent Native Core Stabilization (High Priority)
-Ascent's collection core is built as a custom Expo native module with an Android foreground service. We are actively seeking native Android/Kotlin developers to resolve known core issues:
-* **Background Execution Stability:** Overhauling the background execution daemon (`modules/recording-keepalive/android/.../RecordingImuService.kt`) to ensure stable, continuous sensor sampling without excessive battery drain or OS task termination.
-* **Device Presence & Screen State:** Debugging and fixing the malfunctioning broadcast receivers in `DevicePresence.kt` responsible for tracking `appState` (foreground vs. background) and `lockScreen`/`screenOn` states.
-* **Sensor Buffer Performance:** Optimizing high-frequency IMU buffering, atomic SQLite commits, and memory footprint during extended collection sessions.
+Contributions primarily fall into two overarching tracks:
+
+### Track A: Community Maintenance of Phase 1 (Ascent App & Collection Engine)
+* **Background Execution Reliability:** Overhaul the native Android foreground service and execution daemon (`modules/recording-keepalive/android/.../RecordingImuService.kt`) to ensure stable, non-terminating sensor collection without excessive wake-lock battery drain.
+* **Device Presence & State-Vector Module:** Debug and repair the broken lifecycle listeners in `DevicePresence.kt` to ensure reliable tracking of application state (`appState`: foreground vs. background) and display status (`lockScreen` and `screenOn`).
+* **Hardware Generalization & Vendor Compatibility:** Expand sensor abstraction across diverse Android OEMs, mitigate vendor-specific power-saving interventions, and optimize high-rate IMU ring-buffers.
+* **Streamlining UX & Session Workflow:** Improve the mobile user experience for defining custom floor layouts, managing recording sessions, and exporting standardized datasets smoothly.
 
 ### Track B: Phase 2 Machine Learning & Tooling
-* **Feature Engineering:** Extracting temporal and spectral features from synchronized 6-DoF inertial dynamics, atmospheric pressure delta curves, and RF RSSI distributions.
-* **Model Architectures:** Implementing, training, and benchmarking classification algorithms (e.g., ensemble trees, 1D-CNNs, Recurrent/Transformer models) to predict discrete floor levels (`Floor 1` vs. `Floor 2`).
-* **"Bring-Your-Own-Dataset" Pipelines:** Developing modular scripts and tooling that allow anyone to ingest custom CSV exports and train bespoke classifiers for their own physical spaces.
-* **Data Visualization & Analysis:** Building analysis scripts and exploratory notebooks for evaluating multi-floor RF propagation and stairwell transition dynamics.
+* **Feature Engineering:** Extracting temporal, statistical, and frequency-domain features from synchronized 6-DoF inertial dynamics, atmospheric pressure delta curves, and RF RSSI distributions.
+* **Model Architectures:** Implementing, training, and benchmarking classification models (e.g., ensemble trees, 1D-CNNs, Recurrent/Transformer models) to predict discrete floor levels (`Floor 1` vs. `Floor 2`).
+* **"Bring-Your-Own-Dataset" (BYOD) Framework:** Developing modular data cleaning scripts, validation harnesses, and training CLIs that allow anyone to train custom classifiers on datasets collected via Phase 1.
+* **Exploratory Notebooks & Visualizations:** Building analytical visualizations for evaluating RF propagation gradients, stairwell kinetic transitions, and sensor calibration.
 
 ---
 
