@@ -59,6 +59,52 @@ While this agentic methodology facilitated rapid implementation of complex cross
 
 ---
 
+## The Original Research Mandate: Two-Floor ML Classification
+
+The original objective of this research initiative was to solve a specific vertical localization challenge: **autonomously predicting whether an individual is located on Floor 1 or Floor 2** inside a multi-story facility without relying on specialized external beacon infrastructure.
+
+To achieve this, the program was architected around a two-phase machine learning roadmap:
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│              PHASE 1: MULTIMODAL INGESTION & ANNOTATION (ASCENT)        │
+│                                                                         │
+│  [ Floor 1 Telemetry ]       [ Transition Dynamics ]     [ Floor 2 Telemetry ]
+│    • Stationary Wi-Fi          • Stair Ascent/Descent      • Stationary Wi-Fi 
+│    • Baseline Pressure         • Inertial Trajectories     • Baseline Pressure
+│    • Ambient Kinetics          • Pressure Gradient Shifts  • Ambient Kinetics 
+│                                                                         │
+│                  Researcher Ground-Truth Manual Labeling                 │
+│              (FLOOR_1  •  FLOOR_2  •  VERTICAL TRANSITION)              │
+└────────────────────────────────────┬────────────────────────────────────┘
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│           PHASE 2: SUPERVISED MACHINE LEARNING CLASSIFIER (PLANNED)     │
+│                                                                         │
+│        Multimodal Feature Fusion (RF Signatures + Kinetic IMU + Baro)   │
+│                                    │                                    │
+│                                    ▼                                    │
+│                 Autonomous Discrete Floor Prediction                    │
+│                        [ FLOOR 1  vs.  FLOOR 2 ]                        │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **Phase 1 — Empirical Telemetry Harvesting & Ground-Truth Annotation (The Ascent Tool):**
+   Prior to model training, high-density sensor and RF data had to be systematically harvested across three distinct operational regimes:
+   * Steady-state presence on **Floor 1** (e.g., ground-level strength zones).
+   * Steady-state presence on **Floor 2** (e.g., upper-level cardio zones).
+   * The kinetic **Transition State** between floors (navigating stairwells, escalators, or vertical corridors).
+   
+   Ascent was engineered specifically as the fieldwork tool for this phase—continuously streaming raw 6-DoF inertial dynamics, atmospheric barometric pressure deltas, and Wi-Fi signal characteristics (RSSI, BSSID, carrier bands) while field researchers manually injected live ground-truth markers (`FLOOR_1`, `FLOOR_2`, `GOING_UPSTAIRS`, `COMING_DOWNSTAIRS`) directly into the persistence pipeline.
+
+2. **Phase 2 — Multimodal Machine Learning Classifier (Planned Post-Collection):**
+   The planned second phase was to ingest this synchronously labeled dataset into a machine learning classification pipeline. The model was to learn spatial-RF fingerprinting correlated with atmospheric altitude gradients and gait kinematics, enabling autonomous, real-time prediction of whether a mobile device resides on **Floor 1** or **Floor 2**.
+
+Because the broader research program was aborted mid-stream for internal reasons, the project concluded during Phase 1. The machine learning classification pipeline was never trained or deployed, leaving Ascent in its current state as an uncompleted, frozen telemetry collection harness.
+
+---
+
 ## Architectural Intent & Known Operational Realities
 
 The conceptual design of Ascent targeted four primary telemetry objectives, alongside notable empirical constraints encountered in field execution:
