@@ -4,14 +4,20 @@
 
 ---
 
-> [!WARNING]
-> ### Project Lifecycle & Operational Status: Terminated / Unmaintained
-> **Active development on Ascent has been permanently halted.** The internal research program that commissioned this instrument was terminated midway through execution due to internal reasons. This repository is archived and preserved in its raw state purely as an empirical research artifact.
+> [!NOTE]
+> ### Project Status: Independent Continuation & Transition to Phase 2
+> **While the institutional research program that originally commissioned this tool was terminated midway through execution due to internal reasons, this project is being continued independently.**
 > 
-> **Critical Known Deficiencies & Architectural Anomalies:**
-> * **Heavily "Vibecoded" / AI-Generated Codebase:** The major code written to build this tool was generated and orchestrated by **AI agents**, and the application was **majorly developed by AI**. It was rapidly assembled via prompt-driven workflows rather than rigorous, manually audited production engineering, resulting in architectural idiosyncrasies, unpolished failure paths, and fragile edge cases.
-> * **Background Execution Failure & Resource Inefficiency:** While architected to harvest continuous telemetry, background processing is severely degraded, highly battery-inefficient, and unstable. In practice, long-running data collection frequently fails or stutters once the host application is backgrounded or subjected to platform power-conservation cycles.
-> * **Device Presence & State-Vector Malfunction:** The internal subsystem engineered to track host lifecycle context—specifically the detection of whether the application is running in **Foreground vs. Background** and whether the mobile hardware is in **Lockscreen vs. Offscreen/Active Display** mode—is **malfunctioning and broken**. Ground-truth presence tags (`appState`, `lockScreen`, `screenOn`) emitted by this module should be considered unreliable.
+> **Current Direction & Operational Strategy:**
+> * **Advancing to Phase 2 (All Code in this Repo):** Research is progressing into **Phase 2: Building the Supervised Machine Learning Classifier**. All code for Phase 2—including data sanitization, multimodal feature engineering, and model training—will be developed and maintained directly within this repository.
+> * **Foreground-Only Collection Strategy:** The author is **not fixing Ascent itself** right now. Because Ascent's principal bottleneck is background unreliability, dataset generation is proceeding pragmatically by running the capture tool strictly in the **foreground**.
+> * **Generalized Training Pipeline:** The long-term objective is to provide a turnkey framework enabling researchers and developers to harvest their own spatial datasets and train custom floor-detection classifiers for their own multi-story facilities.
+> * **Open-Source Call for Contributions:** Contributions from the open-source community are warmly invited—especially to help resolve Ascent's native background daemon issues and repair the malfunctioning device presence module!
+> 
+> **Critical Known Deficiencies in Ascent:**
+> * **Heavily "Vibecoded" / AI-Generated Codebase:** The major code written to build this tool was generated and orchestrated by **AI agents**, and the application was **majorly developed by AI**. It was rapidly assembled via prompt-driven workflows rather than manually audited production engineering, resulting in architectural idiosyncrasies and fragile edge cases.
+> * **Background Execution Failure & Resource Inefficiency:** While architected to harvest continuous telemetry, background processing is severely degraded, highly battery-inefficient, and unstable. In practice, long-running collection frequently stutters or halts once backgrounded.
+> * **Device Presence & State-Vector Malfunction:** The internal subsystem engineered to detect host lifecycle context—specifically determining whether the application is running in **Foreground vs. Background** and whether the phone is in **Lockscreen vs. Offscreen/Active Display** mode—is **malfunctioning and broken**. Ground-truth presence tags (`appState`, `lockScreen`, `screenOn`) emitted by this module should be considered unreliable.
 
 ---
 
@@ -101,7 +107,7 @@ To achieve this, the program was architected around a two-phase machine learning
 2. **Phase 2 — Multimodal Machine Learning Classifier (Planned Post-Collection):**
    The planned second phase was to ingest this synchronously labeled dataset into a machine learning classification pipeline. The model was to learn spatial-RF fingerprinting correlated with atmospheric altitude gradients and gait kinematics, enabling autonomous, real-time prediction of whether a mobile device resides on **Floor 1** or **Floor 2**.
 
-Because the broader research program was aborted mid-stream for internal reasons, the project concluded during Phase 1. The machine learning classification pipeline was never trained or deployed, leaving Ascent in its current state as an uncompleted, frozen telemetry collection harness.
+Although the institutional research program was halted during Phase 1, **this research is being actively continued independently**. The focus has shifted directly into executing Phase 2: collecting the initial dataset in the foreground and training the ML classifier, with all subsequent development living in this repository.
 
 ---
 
@@ -200,6 +206,26 @@ The conceptual schema and ingestion pipelines were drafted to advance explorator
 
 ---
 
+## Independent Roadmap: Phase 2 & Open-Source Community Collaboration
+
+While the original institutional program ended, this repository is not abandoned. The author is actively and independently driving the research forward into its next phase.
+
+### 1. The Phase 2 Machine Learning Pipeline
+* **All Phase 2 Code Will Live Here:** Development is shifting into feature extraction, data curation, and model architecture engineering. All preprocessing scripts, training workflows, model definitions, and inference benches will be developed and committed directly within this repository.
+* **Foreground-Only Collection Strategy:** Ascent itself is **not being refactored by the author right now**. Since the primary flaw in Ascent is background execution degradation, dataset acquisition is proceeding pragmatically by operating the application strictly in the **foreground**. This completely bypasses OS background battery-throttling and guarantees uncorrupted, high-frequency telemetry.
+
+### 2. Generalized "Bring-Your-Own-Dataset" Framework
+The long-term vision of this independent project is to build an open, self-service setup for indoor localization:
+* **Universal Telemetry Harvesting:** Providing an open workflow where anyone can record their own paired RF and kinetic telemetry across multi-story buildings.
+* **Custom Classifier Training:** Enabling researchers and developers to train their own tailored floor-prediction models on their own custom spaces (e.g., custom office layouts, gym facilities, or residential buildings).
+
+### 3. Open-Source Call for Contributions (Fixing Ascent)
+Ascent’s native collection engine is open-source, and help from the online developer community is enthusiastically welcomed! If you have experience in native Android development, low-level sensor pipelines, or modern Expo/React Native modules, pull requests are warmly invited to help fix:
+1. **Background Stability & Battery Efficiency:** Re-architecting the background execution daemon (`RecordingImuService`) to eliminate excessive wake-lock power drain and prevent OS task killers from halting collection when backgrounded.
+2. **Device Presence & State-Vector Module:** Debugging and repairing the broken module responsible for accurately resolving host application state (`appState`: foreground vs. background) and hardware display status (`lockScreen` and `screenOn`).
+
+---
+
 ## License & Operational Terms
 
-This repository is distributed under the terms defined in the [LICENSE](LICENSE) file. As an uncompleted prototype from a terminated internal research project, Ascent is released strictly **"as-is"**, with no warranties of fitness, performance, or correctness. No active maintenance, issue triage, or future feature development is planned.
+This repository is distributed under the terms defined in the [LICENSE](LICENSE) file. Ascent is released **"as-is"** as an empirical research prototype. While the author continues independent development on the Phase 2 machine learning pipeline within this repository, contributions from the community to stabilize Ascent's capture core are openly encouraged.
