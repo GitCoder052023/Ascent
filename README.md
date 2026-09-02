@@ -208,6 +208,43 @@ The conceptual schema and ingestion pipelines were drafted to advance explorator
 
 ---
 
+## Quickstart & Build Guide
+
+Follow these steps to set up the repository and compile the standalone Android APK.
+
+### 1. Prerequisites
+* **Node.js:** Node.js (LTS version recommended) and `npm`.
+* **EAS CLI:** Expo Application Services CLI installed globally (`npm install -g eas-cli`) and authenticated (`eas login`).
+* **Physical Android Device:** Android 10+ (API level 29+) with Developer Options and USB debugging enabled.
+
+> [!IMPORTANT]
+> ### Critical Hardware Requirement: Physical Android Device Only
+> **Ascent MUST be deployed and run on a physical Android device. It will NOT work in Expo Go or on Android Simulators / Emulators.**
+> 
+> * **Why not Expo Go?** Ascent relies on custom native Kotlin modules (`modules/recording-keepalive`), foreground service controllers (`FOREGROUND_SERVICE_LOCATION`, `FOREGROUND_SERVICE_HEALTH`), and low-level wake-lock harnesses that are not supported in the standard Expo Go sandboxed runtime.
+> * **Why not an Android Emulator?** Emulators lack physical RF Wi-Fi transceivers capable of scanning local BSSID/RSSI environments and cannot simulate true hardware-driven 6-DoF inertial dynamics or barometric pressure sensors.
+> * **Deployment:** You **must compile a standalone APK** using EAS Build and install it directly onto physical hardware.
+
+### 2. Clone & Install Dependencies
+```bash
+git clone https://github.com/GitCoder052023/Ascent.git
+cd Ascent
+npm install
+```
+
+### 3. Build the Standalone Android APK
+Compile the internal distribution APK using the preconfigured `preview` EAS profile:
+```bash
+eas build --platform android --profile preview
+```
+
+Once the cloud build finishes:
+1. Download the generated `.apk` file (or scan the terminal QR code using your physical Android phone).
+2. Install the APK on your device.
+3. Grant permissions on startup: Location (select **"Allow all the time"** to enable Wi-Fi state access), Activity Recognition, and approve battery optimization exemption when prompted.
+
+---
+
 ## Independent Roadmap: Phase 2 & Open-Source Community Collaboration
 
 While the original institutional program ended, this repository is not abandoned. The author is actively and independently driving the research forward into its next phase.

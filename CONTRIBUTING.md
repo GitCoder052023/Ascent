@@ -32,12 +32,20 @@ Contributions primarily fall into two overarching tracks:
 1. **Fork the Repository:** Create a personal fork of the repository on GitHub.
 2. **Clone Locally:** Clone your fork to your development machine:
    ```bash
-   git clone https://github.com/<your-username>/Ascent.git
+   git clone https://github.com/GitCoder052023/Ascent.git
    cd Ascent
    ```
 3. **Install Dependencies:**
    ```bash
    npm install
+   ```
+4. **Compile Test Builds (Physical Android Hardware Required):**
+   > [!IMPORTANT]
+   > Ascent requires real Android hardware for sensor telemetry and native foreground services. It **cannot run in Expo Go or in an Android simulator**.
+   
+   Compile a standalone preview APK via EAS:
+   ```bash
+   eas build --platform android --profile preview
    ```
 
 ### 2.2 Branch Naming Conventions
