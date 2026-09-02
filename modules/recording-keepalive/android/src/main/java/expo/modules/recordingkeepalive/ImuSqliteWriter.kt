@@ -6,38 +6,8 @@ import android.database.sqlite.SQLiteStatement
 import android.os.Handler
 import android.os.HandlerThread
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.atomic.AtomicLong
-
-internal data class ImuSample(
-  val sensorType: String,
-  val arrivalMs: Long,
-  val sensorTimestampSec: Double,
-  val x: Double? = null,
-  val y: Double? = null,
-  val z: Double? = null,
-  val pressure: Double? = null,
-  val ssid: String? = null,
-  val bssid: String? = null,
-  val rssi: Double? = null,
-  val frequency: Int? = null,
-  val appState: String? = null,
-  val lockScreen: String? = null,
-  val screenOn: String? = null,
-)
-
-internal data class RecordingLabels(
-  val sessionId: String?,
-  val floor: String?,
-  val activity: String?,
-  val motionState: String?,
-  val deviceModel: String?,
-  val osVersion: String?,
-)
 
 internal class ImuSqliteWriter(context: Context) {
   private val dbFile = File(File(context.filesDir, "SQLite"), DB_NAME)
@@ -45,10 +15,6 @@ internal class ImuSqliteWriter(context: Context) {
   private val seq = AtomicLong(0)
   private val totalRawCount = AtomicLong(0)
   private val totalWifiCount = AtomicLong(0)
-  private val isoLock = Any()
-  private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
-    timeZone = TimeZone.getTimeZone("UTC")
-  }
 
   @Volatile var labels = RecordingLabels(null, null, null, null, null, null)
 
@@ -71,11 +37,11 @@ internal class ImuSqliteWriter(context: Context) {
       )
       opened.enableWriteAheadLogging()
       opened.execSQL("PRAGMA busy_timeout = 8000")
-      opened.execSQL(CREATE_RAW)
-      opened.execSQL(CREATE_MEASUREMENTS)
-      migratePresenceColumns(opened)
-      insertRaw = opened.compileStatement(INSERT_RAW)
-      insertMeasurement = opened.compileStatement(INSERT_MEASUREMENT)
+      opened.execSQL(ImuSql.CREATE_RAW)
+      opened.execSQL(ImuSql.CREATE_MEASUREMENTS)
+      ImuSqliteBindings.migratePresenceColumns(opened)
+      insertRaw = opened.compileStatement(ImuSql.INSERT_RAW)
+      insertMeasurement = opened.compileStatement(ImuSql.INSERT_MEASUREMENT)
       val initialRaw = try {
         opened.compileStatement("SELECT COUNT(*) FROM raw_observations").use { it.simpleQueryForLong() }
       } catch (_: Exception) {
@@ -129,13 +95,9 @@ internal class ImuSqliteWriter(context: Context) {
     }
   }
 
-  fun observationCount(): Long {
-    return totalRawCount.get()
-  }
+  fun observationCount(): Long = totalRawCount.get()
 
-  fun wifiCount(): Long {
-    return totalWifiCount.get()
-  }
+  fun wifiCount(): Long = totalWifiCount.get()
 
   fun checkpoint(mode: String = "PASSIVE") {
     try {
@@ -187,12 +149,12 @@ internal class ImuSqliteWriter(context: Context) {
     try {
       for (sample in batch) {
         val id = nextId(sample.arrivalMs, sample.sensorType)
-        bindRaw(rawStatement, sample, snap, id)
+        ImuSqliteBindings.bindRaw(rawStatement, sample, snap, id)
         rawStatement.executeInsert()
         rawStatement.clearBindings()
         if (sample.sensorType == "wifi") {
           insertMeasurement?.let { statement ->
-            bindMeasurement(statement, sample, snap, id)
+            ImuSqliteBindings.bindMeasurement(statement, sample, snap, id)
             statement.executeInsert()
             statement.clearBindings()
           }
@@ -213,182 +175,9 @@ internal class ImuSqliteWriter(context: Context) {
     }
   }
 
-  private fun bindRaw(
-    statement: SQLiteStatement,
-    sample: ImuSample,
-    snap: RecordingLabels,
-    id: String
-  ) {
-    val iso = synchronized(isoLock) { isoFormat.format(Date(sample.arrivalMs)) }
-    statement.bindString(1, id)
-    bindText(statement, 2, snap.sessionId)
-    statement.bindString(3, iso)
-    statement.bindString(4, iso)
-    statement.bindDouble(5, sample.sensorTimestampSec)
-    statement.bindString(6, "arrival")
-    statement.bindString(7, sample.sensorType)
-    bindText(statement, 8, snap.floor)
-    bindText(statement, 9, snap.activity)
-    bindText(statement, 10, snap.motionState)
-    bindDouble(statement, 11, if (sample.sensorType == "accelerometer") sample.x else null)
-    bindDouble(statement, 12, if (sample.sensorType == "accelerometer") sample.y else null)
-    bindDouble(statement, 13, if (sample.sensorType == "accelerometer") sample.z else null)
-    bindDouble(statement, 14, if (sample.sensorType == "gyroscope") sample.x else null)
-    bindDouble(statement, 15, if (sample.sensorType == "gyroscope") sample.y else null)
-    bindDouble(statement, 16, if (sample.sensorType == "gyroscope") sample.z else null)
-    bindDouble(statement, 17, sample.pressure)
-    bindText(statement, 18, sample.ssid)
-    bindText(statement, 19, sample.bssid)
-    bindDouble(statement, 20, sample.rssi)
-    bindText(statement, 21, if (sample.rssi != null) "dBm" else null)
-    if (sample.frequency != null) {
-      statement.bindLong(22, sample.frequency.toLong())
-    } else {
-      statement.bindNull(22)
-    }
-    val hasWifi = sample.ssid != null || sample.bssid != null || sample.rssi != null || sample.sensorType == "wifi"
-    bindText(statement, 23, if (hasWifi) "wifi" else null)
-    statement.bindString(24, "android")
-    bindText(statement, 25, snap.deviceModel)
-    bindText(statement, 26, snap.osVersion)
-    bindText(statement, 27, sample.appState)
-    bindText(statement, 28, sample.lockScreen)
-    bindText(statement, 29, sample.screenOn)
-  }
-
-  private fun bindMeasurement(
-    statement: SQLiteStatement,
-    sample: ImuSample,
-    snap: RecordingLabels,
-    id: String
-  ) {
-    val iso = synchronized(isoLock) { isoFormat.format(Date(sample.arrivalMs)) }
-    val freq = sample.frequency
-    val rssi = sample.rssi?.toInt()
-    val band = ConnectedWifi.frequencyBand(freq)
-    val score = ConnectedWifi.normalizedScore(rssi, freq)
-    statement.bindString(1, id)
-    statement.bindString(2, iso)
-    bindText(statement, 3, snap.floor ?: "FLOOR_1")
-    bindText(statement, 4, sample.ssid)
-    bindText(statement, 5, sample.bssid)
-    bindDouble(statement, 6, sample.rssi)
-    bindText(statement, 7, if (sample.rssi != null) "dBm" else null)
-    if (freq != null) statement.bindLong(8, freq.toLong()) else statement.bindNull(8)
-    statement.bindString(9, "wifi")
-    statement.bindString(10, "android")
-    bindText(statement, 11, snap.deviceModel)
-    bindText(statement, 12, snap.osVersion)
-    bindDouble(statement, 13, score)
-    bindDouble(statement, 14, sample.rssi)
-    bindText(statement, 15, band)
-    bindText(statement, 16, sample.appState)
-    bindText(statement, 17, sample.lockScreen)
-    bindText(statement, 18, sample.screenOn)
-  }
-
-  private fun bindText(statement: SQLiteStatement, index: Int, value: String?) {
-    if (value == null) statement.bindNull(index) else statement.bindString(index, value)
-  }
-
-  private fun bindDouble(statement: SQLiteStatement, index: Int, value: Double?) {
-    if (value == null) statement.bindNull(index) else statement.bindDouble(index, value)
-  }
-
   companion object {
     const val DB_NAME = "wifilogger_v2.db"
     private const val FLUSH_SIZE = 80
     private const val FLUSH_MS = 200L
-    private const val CREATE_RAW = """
-      CREATE TABLE IF NOT EXISTS raw_observations (
-        id TEXT PRIMARY KEY,
-        session_id TEXT,
-        timestamp TEXT NOT NULL,
-        arrival_timestamp TEXT NOT NULL,
-        sensor_timestamp REAL,
-        timestamp_source TEXT NOT NULL,
-        sensor_type TEXT NOT NULL,
-        floor TEXT,
-        activity TEXT,
-        motion_state TEXT,
-        accelerometer_x REAL,
-        accelerometer_y REAL,
-        accelerometer_z REAL,
-        gyroscope_x REAL,
-        gyroscope_y REAL,
-        gyroscope_z REAL,
-        barometer_pressure REAL,
-        ssid TEXT,
-        bssid TEXT,
-        signal_strength REAL,
-        signal_strength_unit TEXT,
-        frequency INTEGER,
-        connection_type TEXT,
-        platform TEXT,
-        device_model TEXT,
-        os_version TEXT,
-        app_state TEXT,
-        lock_screen TEXT,
-        screen_on TEXT
-      )
-    """
-    private const val CREATE_MEASUREMENTS = """
-      CREATE TABLE IF NOT EXISTS measurements (
-        id TEXT PRIMARY KEY,
-        timestamp TEXT NOT NULL,
-        floor TEXT NOT NULL,
-        ssid TEXT,
-        bssid TEXT,
-        signal_strength REAL,
-        signal_strength_unit TEXT,
-        frequency INTEGER,
-        connection_type TEXT,
-        platform TEXT,
-        device_model TEXT,
-        os_version TEXT,
-        signal_strength_normalized REAL,
-        signal_strength_estimated_dbm REAL,
-        frequency_band TEXT,
-        app_state TEXT,
-        lock_screen TEXT,
-        screen_on TEXT
-      )
-    """
-    private const val INSERT_RAW = """
-      INSERT OR REPLACE INTO raw_observations (
-        id, session_id, timestamp, arrival_timestamp, sensor_timestamp, timestamp_source, sensor_type,
-        floor, activity, motion_state,
-        accelerometer_x, accelerometer_y, accelerometer_z,
-        gyroscope_x, gyroscope_y, gyroscope_z, barometer_pressure,
-        ssid, bssid, signal_strength, signal_strength_unit, frequency, connection_type,
-        platform, device_model, os_version, app_state, lock_screen, screen_on
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-    private const val INSERT_MEASUREMENT = """
-      INSERT OR REPLACE INTO measurements (
-        id, timestamp, floor, ssid, bssid, signal_strength, signal_strength_unit,
-        frequency, connection_type, platform, device_model, os_version,
-        signal_strength_normalized, signal_strength_estimated_dbm, frequency_band,
-        app_state, lock_screen, screen_on
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """
-
-    private fun migratePresenceColumns(database: SQLiteDatabase) {
-      val statements = arrayOf(
-        "ALTER TABLE raw_observations ADD COLUMN app_state TEXT",
-        "ALTER TABLE raw_observations ADD COLUMN lock_screen TEXT",
-        "ALTER TABLE raw_observations ADD COLUMN screen_on TEXT",
-        "ALTER TABLE measurements ADD COLUMN app_state TEXT",
-        "ALTER TABLE measurements ADD COLUMN lock_screen TEXT",
-        "ALTER TABLE measurements ADD COLUMN screen_on TEXT",
-      )
-      for (sql in statements) {
-        try {
-          database.execSQL(sql)
-        } catch (_: Exception) {
-          // Column already exists on upgraded databases.
-        }
-      }
-    }
   }
 }

@@ -1,6 +1,11 @@
 import * as Device from "expo-device";
 import { Platform } from "react-native";
-import type { DeviceMeta } from "./rawObservation";
+
+export type DeviceMeta = {
+  platform: string;
+  deviceModel: string | null;
+  osVersion: string | null;
+};
 
 export function getDeviceMeta(): DeviceMeta {
   return {

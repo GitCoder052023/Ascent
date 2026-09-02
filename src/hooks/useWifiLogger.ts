@@ -1,85 +1,52 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, AppState, Platform } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Alert, AppState } from "react-native";
 import {
   clearMeasurements,
-  createMeasurement,
   exportDataset,
   loadMeasurements,
-  persistWifiMeasurement,
   type Floor,
   type Measurement,
 } from "../lib/dataset";
-import { getConnectedWifi, processWifiSignal, type WifiSnapshot } from "../lib/wifi";
 import { EMPTY_WIFI, WIFI_SAMPLE_INTERVAL_MS } from "../constants/app";
 import { getDevicePresence, type DevicePresence } from "../lib/devicePresence";
 import { useMotionDetector } from "./useMotionDetector";
+import { setBackgroundFloor } from "../services/backgroundTask";
 import {
-  stopBackgroundLoggingAsync,
-  setBackgroundFloor,
-  isBackgroundLoggingActiveAsync,
-} from "../services/backgroundTask";
-import {
-  endRecordingSession,
   flushRawWriteBuffer,
   flushWriteBuffer,
   getRawObservationCount,
   getWifiMeasurementCount,
-  insertRecordingSession,
-  nextSessionId,
 } from "../lib/db";
-import { formatIsoMillis } from "../lib/rawObservation";
 import {
   hydrateLabelsFromStorage,
-  KEY_LOCKED_SSID,
   setCachedActivity,
   setCachedFloor,
-  setCachedLockedSsid,
   setCachedMotionState,
-  setCachedRecording,
-  setCachedSessionId,
-  setCachedWifi,
 } from "../lib/recordingContext";
-import { PLATFORM_SENSOR_NOTES, type ActivityLabel } from "../lib/rawTypes";
-import { probeSensorAvailability, useRawSensorCollector } from "./useRawSensorCollector";
-import {
-  isImuCollectorRunning,
-  isUsingNativeImu,
-  startImuCollector,
-  stopImuCollector,
-  syncNativeRecordingLabels,
-} from "../lib/imuCollector";
+import type { ActivityLabel } from "../lib/rawTypes";
+import { useRawSensorCollector } from "./useRawSensorCollector";
+import { syncNativeRecordingLabels } from "../lib/imuCollector";
 import {
   isNativeImuAvailable,
   isNativeImuRecording,
   subscribeNativeImuLatest,
 } from "../../modules/recording-keepalive";
 import { getDeviceMeta } from "../lib/deviceMeta";
-import {
-  ensureUnrestrictedBattery,
-  requestRecordingPermissions,
-} from "../permissions/recordingPermissions";
 import { presenceFromNativeLatest, wifiFromNativeLatest } from "../capture/nativeLatest";
+import { getConnectedWifi, processWifiSignal } from "../lib/wifi";
+import { cacheWifiFields } from "./wifiLogger/cacheWifi";
+import { restoreRecordingIfNeeded } from "./wifiLogger/restoreRecording";
+import { refreshWifi, sampleWifiJs } from "./wifiLogger/sampleWifi";
+import { startRecordingSession, stopRecordingSession } from "./wifiLogger/sessionLifecycle";
 
-const KEY_STARTED = "@wifi_logger_started";
 const DEVICE_META = getDeviceMeta();
-
-function cacheWifiFields(current: WifiSnapshot) {
-  setCachedWifi({
-    ssid: current.ssid,
-    bssid: current.bssid,
-    signalStrength: current.signalStrength,
-    signalStrengthUnit: current.signalStrengthUnit,
-    frequency: current.frequency,
-  });
-}
 
 export function useWifiLogger() {
   const [hydrated, setHydrated] = useState(false);
   const [floor, setFloorState] = useState<Floor>("FLOOR_1");
   const [activity, setActivityState] = useState<ActivityLabel | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [wifi, setWifi] = useState<WifiSnapshot>(EMPTY_WIFI);
+  const [wifi, setWifi] = useState(EMPTY_WIFI);
   const [items, setItems] = useState<Measurement[]>([]);
   const [rawCount, setRawCount] = useState(0);
   const [wifiCount, setWifiCount] = useState(0);
@@ -92,16 +59,11 @@ export function useWifiLogger() {
   const [notice, setNotice] = useState<string | null>(null);
   const [appActive, setAppActive] = useState(AppState.currentState === "active");
   const [presence, setPresence] = useState<DevicePresence>(getDevicePresence);
-  const [lastProcessed, setLastProcessed] = useState<{
-    normalizedScore: number | null;
-    estimatedDbm: number | null;
-    frequencyBand: string;
-    source: "android-native";
-  }>({
-    normalizedScore: null,
-    estimatedDbm: null,
+  const [lastProcessed, setLastProcessed] = useState({
+    normalizedScore: null as number | null,
+    estimatedDbm: null as number | null,
     frequencyBand: "UNKNOWN",
-    source: "android-native",
+    source: "android-native" as const,
   });
 
   const { isMoving, motionState, sampleIntervalMs } = useMotionDetector({
@@ -151,8 +113,13 @@ export function useWifiLogger() {
       }
       void getRawObservationCount().then(setRawCount).catch(() => {});
       void getWifiMeasurementCount().then(setWifiCount).catch(() => {});
-      void refresh();
-      await restoreRecordingIfNeeded();
+      void refreshWifi({ setWifi, setLastProcessed });
+      await restoreRecordingIfNeeded(DEVICE_META, {
+        setStarted,
+        setNetwork,
+        setRecording,
+        setNativeCapture,
+      });
       setHydrated(true);
     }
 
@@ -164,13 +131,18 @@ export function useWifiLogger() {
       void flushWriteBuffer();
       void flushRawWriteBuffer();
       if (active) {
-        void refresh();
+        void refreshWifi({ setWifi, setLastProcessed });
         if (!isNativeImuRecording()) {
           void loadMeasurements().then(setItems).catch(() => {});
         }
         void getRawObservationCount().then(setRawCount);
         void getWifiMeasurementCount().then(setWifiCount);
-        void restoreRecordingIfNeeded();
+        void restoreRecordingIfNeeded(DEVICE_META, {
+          setStarted,
+          setNetwork,
+          setRecording,
+          setNativeCapture,
+        });
       }
     });
 
@@ -185,49 +157,6 @@ export function useWifiLogger() {
     }, 1000);
     return () => clearInterval(clock);
   }, [recording]);
-
-  async function restoreRecordingIfNeeded() {
-    try {
-      if (Platform.OS === "android") {
-        if (await isBackgroundLoggingActiveAsync()) {
-          await stopBackgroundLoggingAsync().catch(() => {});
-        }
-      }
-
-      const storedStarted = await AsyncStorage.getItem(KEY_STARTED);
-      const nativeOn = isNativeImuRecording();
-      if (!storedStarted && !nativeOn) {
-        return;
-      }
-
-      const storedNetwork = await AsyncStorage.getItem(KEY_LOCKED_SSID);
-      if (storedStarted) {
-        const parsed = parseInt(storedStarted, 10);
-        if (!isNaN(parsed)) {
-          setStarted(parsed);
-        }
-      } else {
-        const now = Date.now();
-        setStarted(now);
-        await AsyncStorage.setItem(KEY_STARTED, String(now)).catch(() => {});
-      }
-      if (storedNetwork) {
-        setNetwork(storedNetwork);
-        setCachedLockedSsid(storedNetwork);
-      }
-      if (!isImuCollectorRunning()) {
-        await startImuCollector(DEVICE_META);
-      }
-      if (!isImuCollectorRunning() && !isNativeImuRecording()) {
-        return;
-      }
-      setRecording(true);
-      setCachedRecording(true);
-      setNativeCapture(isUsingNativeImu() || isNativeImuRecording());
-    } catch {
-      // Ignore restore errors; the user can start a new session.
-    }
-  }
 
   useEffect(() => {
     if (!recording || !started) {
@@ -283,203 +212,58 @@ export function useWifiLogger() {
   }, [jsWifiSampling, floor, network]);
   /* eslint-enable react-hooks/exhaustive-deps */
 
-  async function refresh() {
-    try {
-      const current = await getConnectedWifi();
-      setWifi(current);
-      cacheWifiFields(current);
-      setLastProcessed(processWifiSignal(current));
-    } catch {
-      setWifi(EMPTY_WIFI);
-    }
-  }
-
   async function sample() {
-    if (isNativeImuAvailable() || nativeCapture) {
-      return;
-    }
-    try {
-      const current = await getConnectedWifi();
-      setWifi(current);
-      cacheWifiFields(current);
-
-      if (network && current.ssid && current.ssid !== network) {
-        setPaused(true);
-        setNotice(
-          `WARNING: Connected Wi-Fi changed. Previous: ${network}. Current: ${current.ssid}. IMU and Wi-Fi rows still record.`
-        );
-      }
-
-      const processed = processWifiSignal(current);
-      setLastProcessed(processed);
-
-      const item = createMeasurement(floor, current, processed);
-      const key = `${item.timestamp.slice(0, 19)}-${item.ssid}-${item.bssid}-${item.signalStrength}-${item.floor}`;
-
-      if (key === lastSampleKey.current) {
-        return;
-      }
-
-      lastSampleKey.current = key;
-      await persistWifiMeasurement(item);
-      setItems((old) => [...old, item]);
-    } catch {
-      setNotice(
-        "A Wi-Fi reading failed. IMU recording continues; Wi-Fi will retry at the next interval."
-      );
-    }
-  }
-
-  async function abortFailedStart() {
-    setRecording(false);
-    setPaused(false);
-    setCachedRecording(false);
-    setNativeCapture(false);
-    await stopImuCollector().catch(() => {});
-    await AsyncStorage.removeItem(KEY_STARTED).catch(() => {});
-    setCachedLockedSsid(null);
-    setNetwork(null);
-    setCachedSessionId(null);
-    setSessionId(null);
-    setStarted(null);
-    setSeconds(0);
+    await sampleWifiJs({
+      nativeCapture,
+      floor,
+      network,
+      lastSampleKey,
+      setWifi,
+      setPaused,
+      setNotice,
+      setLastProcessed,
+      setItems,
+    });
   }
 
   async function start() {
-    if (recording || startingRef.current) {
-      return;
-    }
-    startingRef.current = true;
-    try {
-      if (isNativeImuRecording() || isImuCollectorRunning()) {
-        await stopImuCollector().catch(() => {});
-      }
-      if (!(await requestRecordingPermissions(setNotice))) {
-        return;
-      }
-      if (!(await ensureUnrestrictedBattery())) {
-        setNotice(
-          "Recording did not start. Allow unrestricted battery, then tap Start Recording again."
-        );
-        return;
-      }
-
-      const current = await getConnectedWifi();
-      setWifi(current);
-
-      const now = Date.now();
-      const availability = await probeSensorAvailability();
-      const newSessionId = await nextSessionId();
-      await insertRecordingSession({
-        id: newSessionId,
-        startedAt: formatIsoMillis(now),
-        endedAt: null,
-        accelerometerAvailable: availability.accelerometerAvailable,
-        gyroscopeAvailable: availability.gyroscopeAvailable,
-        barometerAvailable: availability.barometerAvailable,
-        platform: DEVICE_META.platform,
-        deviceModel: DEVICE_META.deviceModel,
-        osVersion: DEVICE_META.osVersion,
-        notes: PLATFORM_SENSOR_NOTES,
-      });
-
-      setCachedSessionId(newSessionId);
-      setCachedFloor(floor);
-      setCachedActivity(activity);
-      setCachedRecording(true);
-      setSessionId(newSessionId);
-      setStarted(now);
-      setSeconds(0);
-      setPaused(false);
-
-      await AsyncStorage.setItem(KEY_STARTED, String(now));
-      if (current.connectionState === "CONNECTED" && current.ssid) {
-        setCachedLockedSsid(current.ssid);
-        setNetwork(current.ssid);
-      } else {
-        setCachedLockedSsid(null);
-        setNetwork(null);
-      }
-
-      await startImuCollector(DEVICE_META);
-      setNativeCapture(isUsingNativeImu());
-      setRecording(true);
-
-      let backgroundNotice: string | null = null;
-      if (Platform.OS === "android") {
-        await stopBackgroundLoggingAsync().catch(() => {});
-      }
-
-      if (Platform.OS === "android" && isUsingNativeImu()) {
-        backgroundNotice = [
-          backgroundNotice,
-          "Keep the IMU notification visible and lock Ascent in Recents.",
-        ]
-          .filter(Boolean)
-          .join(" ");
-      }
-
-      if (!availability.barometerAvailable) {
-        backgroundNotice = [backgroundNotice, "No barometer on this device. Pressure rows will not be written."]
-          .filter(Boolean)
-          .join(" ");
-      }
-
-      if (current.connectionState !== "CONNECTED" || !current.ssid) {
-        backgroundNotice = [
-          backgroundNotice,
-          "No Wi-Fi connection. Recording IMU/barometer only; Wi-Fi rows will appear if you connect later.",
-        ]
-          .filter(Boolean)
-          .join(" ");
-      }
-
-      setNotice(backgroundNotice);
-
-      if (!isUsingNativeImu()) {
-        await sample();
-      }
-    } catch (e) {
-      console.warn("Could not start recording:", e);
-      await abortFailedStart();
-      setNotice("Recording could not start. Try again.");
-    } finally {
-      startingRef.current = false;
-    }
+    await startRecordingSession({
+      recording,
+      startingRef,
+      floor,
+      activity,
+      deviceMeta: DEVICE_META,
+      sample,
+      setWifi,
+      setSessionId,
+      setStarted,
+      setSeconds,
+      setPaused,
+      setNetwork,
+      setNativeCapture,
+      setRecording,
+      setNotice,
+    });
   }
 
   async function stop() {
-    setRecording(false);
-    setPaused(false);
-    setCachedRecording(false);
-    setNativeCapture(false);
-    await stopImuCollector();
-    await AsyncStorage.removeItem(KEY_STARTED);
-    setCachedLockedSsid(null);
-    setNetwork(null);
-    try {
-      await stopBackgroundLoggingAsync();
-    } catch (e) {
-      console.warn("Could not stop background task:", e);
-    }
-    await flushWriteBuffer();
-    await flushRawWriteBuffer();
-    if (sessionId) {
-      await endRecordingSession(sessionId, formatIsoMillis(Date.now()));
-    }
-    setCachedSessionId(null);
-    setSessionId(null);
-    try {
-      const measurements = await loadMeasurements();
-      setItems(measurements);
-    } catch {
-      // Keep the in-memory list if the reload fails.
-    }
-    const count = await getRawObservationCount().catch(() => rawCount);
-    setRawCount(count);
-    const wCount = await getWifiMeasurementCount().catch(() => items.length);
-    setWifiCount(wCount);
-    setNotice("Recording stopped. Your dataset remains stored on this device.");
+    await stopRecordingSession({
+      sessionId,
+      rawCount,
+      itemsLength: items.length,
+      setWifi,
+      setSessionId,
+      setStarted,
+      setSeconds,
+      setPaused,
+      setNetwork,
+      setNativeCapture,
+      setRecording,
+      setNotice,
+      setItems,
+      setRawCount,
+      setWifiCount,
+    });
   }
 
   async function resume() {
@@ -549,3 +333,5 @@ export function useWifiLogger() {
     wifiCount,
   };
 }
+
+export type WifiLogger = ReturnType<typeof useWifiLogger>;

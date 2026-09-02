@@ -1,10 +1,7 @@
 package expo.modules.recordingkeepalive
 
-import android.content.Intent
-import android.net.Uri
 import android.os.PowerManager
 import android.os.SystemClock
-import android.provider.Settings
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import java.lang.ref.WeakReference
@@ -57,50 +54,28 @@ class RecordingKeepaliveModule : Module() {
     }
 
     Function("isRecording") {
-      RecordingImuService.running
+      RecordingImuController.running
     }
 
     Function("lastSampleAgeMs") {
-      if (!RecordingImuService.running) {
+      if (!RecordingImuController.running) {
         return@Function 10_000_000L
       }
-      if (RecordingImuService.lastSampleAtElapsed == 0L) {
+      if (RecordingImuController.lastSampleAtElapsed == 0L) {
         return@Function 0L
       }
-      (SystemClock.elapsedRealtime() - RecordingImuService.lastSampleAtElapsed).coerceAtMost(10_000_000L)
+      (SystemClock.elapsedRealtime() - RecordingImuController.lastSampleAtElapsed).coerceAtMost(10_000_000L)
     }
 
     Function("isIgnoringBatteryOptimizations") {
       val ctx = appContext.reactContext ?: return@Function false
-      val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
-      pm.isIgnoringBatteryOptimizations(ctx.packageName)
+      BatteryExemption.isIgnoring(ctx)
     }
 
     AsyncFunction("requestIgnoreBatteryOptimizations") {
       val activity = appContext.currentActivity
       val ctx = activity ?: appContext.reactContext ?: return@AsyncFunction false
-      val pm = ctx.getSystemService(android.content.Context.POWER_SERVICE) as PowerManager
-      if (pm.isIgnoringBatteryOptimizations(ctx.packageName)) {
-        return@AsyncFunction true
-      }
-      val packageUri = Uri.parse("package:${ctx.packageName}")
-      try {
-        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-          data = packageUri
-          if (activity == null) {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          }
-        }
-        ctx.startActivity(intent)
-      } catch (_: Exception) {
-        val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-          if (activity == null) {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          }
-        }
-        ctx.startActivity(fallback)
-      }
-      false
+      BatteryExemption.request(ctx, activity != null)
     }
 
     Function("probeAvailability") {
@@ -123,17 +98,17 @@ class RecordingKeepaliveModule : Module() {
     }
 
     Function("rawCount") {
-      val count = RecordingImuService.activeWriter?.observationCount()
+      val count = RecordingImuController.activeWriter?.observationCount()
       if (count != null && count >= 0L) count else 0L
     }
 
     Function("wifiCount") {
-      val count = RecordingImuService.activeWriter?.wifiCount()
+      val count = RecordingImuController.activeWriter?.wifiCount()
       if (count != null && count >= 0L) count else 0L
     }
 
     AsyncFunction("flushWrites") {
-      RecordingImuService.activeWriter?.let { writer ->
+      RecordingImuController.activeWriter?.let { writer ->
         writer.flushBlocking()
         writer.checkpoint("PASSIVE")
         true
@@ -191,22 +166,22 @@ class RecordingKeepaliveModule : Module() {
     ) {
       instance?.get()?.sendEvent(
         "onLatest",
-        mapOf(
-          "accelerometer" to accelerometer,
-          "gyroscope" to gyroscope,
-          "barometer" to barometer,
-          "motionState" to motionState,
-          "lastSampleAt" to lastSampleAt,
-          "wifiConnectionState" to wifiConnectionState,
-          "wifiSsid" to wifiSsid,
-          "wifiBssid" to wifiBssid,
-          "wifiRssi" to wifiRssi,
-          "wifiFrequency" to wifiFrequency,
-          "wifiTimestamp" to wifiTimestamp,
-          "wifiSsidMismatch" to wifiSsidMismatch,
-          "appState" to appState,
-          "lockScreen" to lockScreen,
-          "screenOn" to screenOn,
+        LatestEvent.payload(
+          accelerometer,
+          gyroscope,
+          barometer,
+          motionState,
+          lastSampleAt,
+          wifiConnectionState,
+          wifiSsid,
+          wifiBssid,
+          wifiRssi,
+          wifiFrequency,
+          wifiTimestamp,
+          wifiSsidMismatch,
+          appState,
+          lockScreen,
+          screenOn,
         )
       )
     }

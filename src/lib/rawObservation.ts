@@ -1,3 +1,4 @@
+import type { DeviceMeta } from "./deviceMeta";
 import { getDevicePresence } from "./devicePresence";
 import { getCachedWifi, type CachedWifi } from "./recordingContext";
 import type {
@@ -7,6 +8,8 @@ import type {
   RawObservation,
   SensorType,
 } from "./rawTypes";
+
+export type { DeviceMeta };
 
 let observationSeq = 0;
 
@@ -18,12 +21,6 @@ export function nextObservationId(epochMs: number, sensorType: SensorType): stri
   observationSeq += 1;
   return `${epochMs}-${sensorType}-${observationSeq}`;
 }
-
-export type DeviceMeta = {
-  platform: string;
-  deviceModel: string | null;
-  osVersion: string | null;
-};
 
 export type LabelContext = {
   sessionId: string | null;
@@ -163,12 +160,4 @@ export function createWifiObservation(
   return row;
 }
 
-export function csvCell(item: unknown): string {
-  if (item === null || item === undefined) {
-    return "";
-  }
-  if (typeof item === "number" && Number.isFinite(item)) {
-    return String(item);
-  }
-  return `"${String(item).replaceAll('"', '""')}"`;
-}
+export { csvCell } from "./csv";
