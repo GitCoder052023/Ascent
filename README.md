@@ -2,6 +2,8 @@
 
 > **Internal Telemetry Harvesting & Multimodal Spatial Dynamics Research Instrument**
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ---
 
 > [!NOTE]
@@ -12,7 +14,7 @@
 > * **Advancing to Phase 2 (All Code in this Repo):** Research is progressing into **Phase 2: Building the Supervised Machine Learning Classifier**. All code for Phase 2—including data sanitization, multimodal feature engineering, and model training—will be developed and maintained directly within this repository.
 > * **Foreground-Only Collection Strategy:** The author is **not fixing Ascent itself** right now. Because Ascent's principal bottleneck is background unreliability, dataset generation is proceeding pragmatically by running the capture tool strictly in the **foreground**.
 > * **Generalized Training Pipeline:** The long-term objective is to provide a turnkey framework enabling researchers and developers to harvest their own spatial datasets and train custom floor-detection classifiers for their own multi-story facilities.
-> * **Open-Source Call for Contributions:** Contributions from the open-source community are warmly invited—especially to help resolve Ascent's native background daemon issues and repair the malfunctioning device presence module!
+> * **Open-Source Call for Contributions:** Contributions from the open-source community are warmly invited—especially to help resolve Ascent's native background daemon issues and repair the malfunctioning device presence module! Review the [Contributing Guide](CONTRIBUTING.md) to get started.
 > 
 > **Critical Known Deficiencies in Ascent:**
 > * **Heavily "Vibecoded" / AI-Generated Codebase:** The major code written to build this tool was generated and orchestrated by **AI agents**, and the application was **majorly developed by AI**. It was rapidly assembled via prompt-driven workflows rather than manually audited production engineering, resulting in architectural idiosyncrasies and fragile edge cases.
@@ -224,8 +226,24 @@ Ascent’s native collection engine is open-source, and help from the online dev
 1. **Background Stability & Battery Efficiency:** Re-architecting the background execution daemon (`RecordingImuService`) to eliminate excessive wake-lock power drain and prevent OS task killers from halting collection when backgrounded.
 2. **Device Presence & State-Vector Module:** Debugging and repairing the broken module responsible for accurately resolving host application state (`appState`: foreground vs. background) and hardware display status (`lockScreen` and `screenOn`).
 
+Please consult the [Contributing Guide](CONTRIBUTING.md) for branch naming conventions, workflow steps, and development setup.
+
+---
+
+## Repository Governance & Community Guidelines
+
+| Document | Description |
+| :--- | :--- |
+| [Contributing Guide](CONTRIBUTING.md) | Contribution tracks (ML vs. Native Core), PR workflow, and development setup. |
+| [Code of Conduct](CODE_OF_CONDUCT.md) | Community standards, pledge, and enforcement responsibilities. |
+| [Security & Privacy Policy](SECURITY.md) | Local-first guarantees, spatial/RF privacy disclosures, and vulnerability reporting. |
+| [License](LICENSE) | Terms of distribution and reuse (MIT License). |
+
 ---
 
 ## License & Operational Terms
 
-This repository is distributed under the terms defined in the [LICENSE](LICENSE) file. Ascent is released **"as-is"** as an empirical research prototype. While the author continues independent development on the Phase 2 machine learning pipeline within this repository, contributions from the community to stabilize Ascent's capture core are openly encouraged.
+This project is open-source software licensed under the **[MIT License](LICENSE)**.
+
+Ascent is released **"as-is"** as an empirical research prototype. While the author continues independent development on the Phase 2 machine learning pipeline within this repository, contributions from the community to stabilize Ascent's capture core are openly encouraged under the same MIT license terms.
+
